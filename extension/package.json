@@ -1,0 +1,72 @@
+{
+  "name": "secure-coding-assistant",
+  "displayName": "Secure Coding Assistant",
+  "description": "Real-time AI-powered secure coding assistant for Python and JavaScript.",
+  "version": "0.1.0",
+  "publisher": "your-name",
+  "engines": {
+    "vscode": "^1.85.0"
+  },
+  "categories": [
+    "Linters",
+    "Machine Learning",
+    "Other"
+  ],
+  "activationEvents": [
+    "onLanguage:python",
+    "onLanguage:javascript",
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "commands": [
+      {
+        "command": "secureCoding.scanCurrentFile",
+        "title": "Secure Coding: Scan Current File"
+      },
+      {
+        "command": "secureCoding.fixWithAI",
+        "title": "Secure Coding: Fix with AI"
+      },
+      {
+        "command": "secureCoding.showSecurityScore",
+        "title": "Secure Coding: Show Security Score"
+      }
+    ],
+    "configuration": {
+      "title": "Secure Coding Assistant",
+      "properties": {
+        "secureCoding.backendUrl": {
+          "type": "string",
+          "default": "http://localhost:8000",
+          "description": "Backend API URL"
+        },
+        "secureCoding.aiApiBase": {
+          "type": "string",
+          "default": "http://localhost:8001/v1",
+          "description": "AI API base URL"
+        },
+        "secureCoding.aiApiKey": {
+          "type": "string",
+          "default": "",
+          "description": "API key for AI model"
+        },
+        "secureCoding.aiModel": {
+          "type": "string",
+          "default": "gpt-4o-mini",
+          "description": "Model name for AI suggestions"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "devDependencies": {
+    "@types/node": "^20.x",
+    "@types/vscode": "^1.85.0",
+    "typescript": "^5.3.0"
+  }
+}
