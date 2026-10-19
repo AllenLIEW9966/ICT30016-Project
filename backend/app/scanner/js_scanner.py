@@ -151,5 +151,12 @@ def _collect_findings(source: str, filename: str) -> list[dict]:
 
 
 def scan(source: str, filename: str = "untitled") -> list[dict]:
-    # JS scanner is regex-based for now; proper AST can come later
+    """O-01: @babel/parser AST via sidecar, regex fallback if Node missing."""
+    try:
+        from app.scanner.js_ast_bridge import scan_with_ast
+        findings = scan_with_ast(source, filename)
+        if findings is not None:
+            return findings
+    except Exception:
+        pass
     return _collect_findings(source, filename)

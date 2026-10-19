@@ -10,6 +10,25 @@ def _rule(**kwargs):
 
 
 # A03:2021 Injection — SQL string concatenation via cursor.execute with f-string / format / + concat
+# O-03 extension: also flag tainted Name (variable holding dynamic query) so
+# q = "..." + u; cursor.execute(q) is caught, not just inline concat.
+_TAINTED_NAMES: set[str] = set()
+
+
+def _mark_tainted(tree: ast.AST) -> set[str]:
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            t = node.targets[0]
+            v = node.value
+            dyn = isinstance(v, (ast.JoinedStr, ast.BinOp))
+            if not dyn and isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute):
+                dyn = v.func.attr == "format"
+            if dyn and isinstance(t, ast.Name):
+                out.add(t.id)
+    return out
+
+
 def _sql_injection_fstring(node: ast.Call) -> bool:
     if not isinstance(node.func, ast.Attribute) or node.func.attr != "execute":
         return False
@@ -21,6 +40,8 @@ def _sql_injection_fstring(node: ast.Call) -> bool:
     if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add):
         return True
     if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "format":
+        return True
+    if isinstance(arg, ast.Name) and arg.id in _TAINTED_NAMES:
         return True
     return False
 
@@ -115,6 +136,21 @@ def _open_user_path(node: ast.Call) -> bool:
 
 
 # A10:2021 — requests.get/post with user-controlled URL
+# O-03 extension: bare Name is user-controlled unless plainly CONSTANT
+# (constant URLs like "https://api.example.com" must NOT fire).
+_URL_CONSTANTS: set[str] = set()
+
+
+def _mark_url_constants(tree: ast.AST) -> set[str]:
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Assign) and len(node.targets) == 1:
+            t = node.targets[0]
+            if isinstance(t, ast.Name) and isinstance(node.value, ast.Constant):
+                out.add(t.id)
+    return out
+
+
 def _ssrf_requests(node: ast.Call) -> bool:
     if not isinstance(node.func, ast.Attribute):
         return False
@@ -124,6 +160,10 @@ def _ssrf_requests(node: ast.Call) -> bool:
         return False
     first = node.args[0]
     if isinstance(first, (ast.JoinedStr, ast.BinOp)):
+        return True
+    if isinstance(first, ast.Call) and isinstance(first.func, ast.Attribute):
+        return first.func.attr == "format"
+    if isinstance(first, ast.Name) and first.id not in _URL_CONSTANTS:
         return True
     return False
 

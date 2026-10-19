@@ -15,8 +15,10 @@ class ScanRequest(BaseModel):
 
 @router.post("/scan")
 async def scan_code(req: ScanRequest):
+    import time
     language = req.language.lower()
     code = req.code
+    t0 = time.perf_counter()
 
     if language == "python":
         findings = scan(code, filename=req.filename)
@@ -25,9 +27,11 @@ async def scan_code(req: ScanRequest):
     else:
         raise HTTPException(status_code=400, detail=f"Unsupported language: {language}")
 
+    elapsed_ms = (time.perf_counter() - t0) * 1000.0
     return {
         "language": language,
         "filename": req.filename,
         "findings_count": len(findings),
         "findings": findings,
+        "scan_time_ms": round(elapsed_ms, 2),
     }

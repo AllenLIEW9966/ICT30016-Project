@@ -175,6 +175,101 @@ def test_js_safe_code_no_findings():
     assert findings == []
 
 
+# ---- O-01: @babel/parser AST precision (no paren/regex false alarms) ----
+JS_AST_PARENS = """
+function ok(cond) {
+  if (cond) { return cond; } // must not fire JS-SQLI-001
+  return "no (execute|query) call here";
+}
+"""
+
+JS_AST_SQLI_TPL = """
+function getUser(userId) {
+  return db.query(`SELECT * FROM users WHERE id = ${userId}`);
+}
+"""
+
+JS_AST_NEWFUNC = """
+const add = new Function("a", "b", "return a + b");
+"""
+
+JS_AST_HASH = """
+const crypto = require("crypto");
+const h = crypto.createHash("md5").update(x).digest("hex");
+"""
+
+JS_AST_DOCWRITE = """
+function out(s) { document.write(s); }
+"""
+
+
+def test_js_ast_no_false_positive_on_parens():
+    findings = js_scanner.scan(JS_AST_PARENS, "t.js")
+    assert findings == [], findings
+
+
+def test_js_ast_sqli_template_literal():
+    findings = js_scanner.scan(JS_AST_SQLI_TPL, "t.js")
+    assert any(f["rule_id"] == "JS-SQLI-001" for f in findings), findings
+
+
+def test_js_ast_new_function():
+    findings = js_scanner.scan(JS_AST_NEWFUNC, "t.js")
+    assert any(f["rule_id"] == "JS-CODE-EXEC-002" for f in findings), findings
+
+
+def test_js_ast_createhash_md5():
+    findings = js_scanner.scan(JS_AST_HASH, "t.js")
+    assert any(f["rule_id"] == "JS-CRYPTO-001" for f in findings), findings
+
+
+def test_js_ast_document_write():
+    findings = js_scanner.scan(JS_AST_DOCWRITE, "t.js")
+    assert any(f["rule_id"] == "JS-XSS-001" for f in findings), findings
+
+
+# ---- O-03: semantic validation FP suppression + TP retention ----
+FP_CONST_SQL = 'cursor.execute("SELECT * FROM t")'
+FP_PLACEHOLDER = 'PASSWORD = "xxx"'
+FP_ENV_SECRET = 'import os\nPASSWORD = os.environ.get("X")'
+TP_SQLI = 'cursor.execute(f"SELECT * FROM t WHERE id={x}")'
+
+
+def test_o03_const_query_suppressed():
+    assert scan(FP_CONST_SQL, "t.py") == []
+
+
+def test_o03_placeholder_secret_suppressed():
+    assert scan(FP_PLACEHOLDER, "t.py") == []
+
+
+def test_o03_env_secret_suppressed():
+    assert scan(FP_ENV_SECRET, "t.py") == []
+
+
+def test_o03_true_positive_retained():
+    findings = scan(TP_SQLI, "t.py")
+    assert any(f["rule_id"] == "PY-SQLI-001" for f in findings), findings
+
+
+# ---- O-02: context bounding + template fallback ----
+def test_o02_context_window():
+    from app.ai.context import extract_context
+    src = "\n".join("print(%d)" % i for i in range(1, 101))
+    ctx = extract_context(src, 50)
+    assert ctx["start_line"] == 35 and ctx["end_line"] == 65, ctx
+    assert ctx["total_lines"] == 100
+
+
+def test_o02_template_fallback():
+    from app.ai.templates import template_fix
+    tpl = template_fix("python", "PY-SQLI-001")
+    assert tpl and "?" in tpl["secure_code"], tpl
+    tpl2 = template_fix("javascript", "JS-XSS-001")
+    assert tpl2 and "textContent" in tpl2["secure_code"], tpl2
+    assert template_fix("python", "NOPE-000") is None
+
+
 if __name__ == "__main__":
     tests = [
         test_sqli_detection,
@@ -192,6 +287,17 @@ if __name__ == "__main__":
         test_js_debugger_detection,
         test_js_jwt_detection,
         test_js_safe_code_no_findings,
+        test_js_ast_no_false_positive_on_parens,
+        test_js_ast_sqli_template_literal,
+        test_js_ast_new_function,
+        test_js_ast_createhash_md5,
+        test_js_ast_document_write,
+        test_o03_const_query_suppressed,
+        test_o03_placeholder_secret_suppressed,
+        test_o03_env_secret_suppressed,
+        test_o03_true_positive_retained,
+        test_o02_context_window,
+        test_o02_template_fallback,
     ]
 
     for test in tests:

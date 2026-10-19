@@ -27,10 +27,12 @@ class Finding:
 
 
 class _RuleVisitor(ast.NodeVisitor):
-    def __init__(self, source: str):
+    def __init__(self, source: str, tree: ast.AST | None = None, validate: bool = True):
         # keep source lines so we can grab the exact code snippet later
         self.source = source.splitlines()
         self.findings: List[Finding] = []
+        self._tree = tree
+        self._validate = validate
 
     def _snippet(self, node: ast.AST) -> str:
         # get the lines involved in this AST node
@@ -38,7 +40,17 @@ class _RuleVisitor(ast.NodeVisitor):
         end = getattr(node, "end_lineno", start)
         return "\n".join(self.source[start - 1 : end])
 
-    def _check(self, node: ast.AST, rule: dict):
+    def _check(self, node: ast.AST, rule: dict, tree: ast.AST | None = None):
+        # O-03: semantic validation prunes likely false positives
+        reason = "no-validator-keep"
+        if tree is not None and self._validate:
+            try:
+                from app.scanner.semantic import validate_finding
+                keep, reason = validate_finding(rule["id"], node, tree)
+                if not keep:
+                    return
+            except Exception:
+                pass
         # record a finding when a rule matches
         self.findings.append(
             Finding(
@@ -55,7 +67,7 @@ class _RuleVisitor(ast.NodeVisitor):
                 end_column=getattr(node, "end_col_offset", node.col_offset),
                 suggestion=rule["suggestion"],
                 code_snippet=self._snippet(node),
-                context={},
+                context={"validation": reason},
             )
         )
 
@@ -63,32 +75,32 @@ class _RuleVisitor(ast.NodeVisitor):
         # check all call-based rules, e.g. eval(), exec(), os.system()
         for rule in PYTHON_RULES:
             if rule.get("checker") == "call" and rule["matches"](node):
-                self._check(node, rule)
+                self._check(node, rule, self._tree)
         self.generic_visit(node)
 
     def visit_Assign(self, node: ast.Assign):
         # check assignment-based rules, e.g. hardcoded secrets, weak hash
         for rule in PYTHON_RULES:
             if rule.get("checker") == "assign" and rule["matches"](node):
-                self._check(node, rule)
+                self._check(node, rule, self._tree)
         self.generic_visit(node)
 
     def visit_Expr(self, node: ast.Expr):
         # check standalone expressions like eval(...)
         for rule in PYTHON_RULES:
             if rule.get("checker") == "eval" and rule["matches"](node):
-                self._check(node, rule)
+                self._check(node, rule, self._tree)
         self.generic_visit(node)
 
     def visit_For(self, node: ast.For):
         # future-proofing: for-loop rules go here if needed
         for rule in PYTHON_RULES:
             if rule.get("checker") == "for" and rule["matches"](node):
-                self._check(node, rule)
+                self._check(node, rule, self._tree)
         self.generic_visit(node)
 
 
-def scan(source: str, filename: str = "untitled") -> list[dict]:
+def scan(source: str, filename: str = "untitled", validate: bool = True) -> list[dict]:
     try:
         tree = ast.parse(source)
     except SyntaxError as exc:
@@ -112,6 +124,19 @@ def scan(source: str, filename: str = "untitled") -> list[dict]:
             }
         ]
 
-    visitor = _RuleVisitor(source)
+    visitor = _RuleVisitor(source, tree, validate=validate)
+    try:
+        from app.scanner.rules.python_rules import (
+            _mark_tainted,
+            _mark_url_constants,
+            _TAINTED_NAMES,
+            _URL_CONSTANTS,
+        )
+        _TAINTED_NAMES.clear()
+        _TAINTED_NAMES.update(_mark_tainted(tree))
+        _URL_CONSTANTS.clear()
+        _URL_CONSTANTS.update(_mark_url_constants(tree))
+    except Exception:
+        pass
     visitor.visit(tree)
     return [f.to_dict() for f in visitor.findings]

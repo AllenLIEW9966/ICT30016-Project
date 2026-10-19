@@ -1,0 +1,10 @@
+{
+  "name": "codeshield-js-ast",
+  "version": "0.1.0",
+  "private": true,
+  "description": "CodeShield AI JS AST sidecar - @babel/parser based scanner for O-01",
+  "type": "commonjs",
+  "dependencies": {
+    "@babel/parser": "^7.24.0"
+  }
+}

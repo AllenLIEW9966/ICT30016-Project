@@ -1,0 +1,303 @@
+{
+  "cases": 30,
+  "m2_detection_rate": 1.0,
+  "m2_hits": "21/21",
+  "m2_pass": true,
+  "m3_raw_fp": 2,
+  "m3_val_fp": 0,
+  "m3_fp_reduction": 1.0,
+  "m3_tp_raw": 12,
+  "m3_tp_val": 12,
+  "m3_pass": true,
+  "m25_patch_rate": 0.857,
+  "m25_hits": "18/21",
+  "m25_pass": true,
+  "nfr01_scan_p50_ms": 0.54,
+  "nfr01_scan_p95_ms": 11.48,
+  "nfr01_scan_max_ms": 25.97,
+  "nfr01_under_100ms": true,
+  "rows": [
+    {
+      "id": "PY-TP-01",
+      "lang": "python",
+      "expect": "PY-SQLI-001",
+      "got": [
+        "PY-SQLI-001"
+      ],
+      "pass": true,
+      "ms": 10.25
+    },
+    {
+      "id": "PY-TP-02",
+      "lang": "python",
+      "expect": "PY-SQLI-001",
+      "got": [
+        "PY-SQLI-001"
+      ],
+      "pass": true,
+      "ms": 0.54
+    },
+    {
+      "id": "PY-TP-03",
+      "lang": "python",
+      "expect": "PY-CMD-001",
+      "got": [
+        "PY-CMD-001"
+      ],
+      "pass": true,
+      "ms": 0.28
+    },
+    {
+      "id": "PY-TP-04",
+      "lang": "python",
+      "expect": "PY-SECRETS-001",
+      "got": [
+        "PY-SECRETS-001"
+      ],
+      "pass": true,
+      "ms": 0.25
+    },
+    {
+      "id": "PY-TP-05",
+      "lang": "python",
+      "expect": "PY-PATH-001",
+      "got": [
+        "PY-PATH-001"
+      ],
+      "pass": true,
+      "ms": 0.28
+    },
+    {
+      "id": "PY-TP-06",
+      "lang": "python",
+      "expect": "PY-SSRF-001",
+      "got": [
+        "PY-SSRF-001"
+      ],
+      "pass": true,
+      "ms": 0.25
+    },
+    {
+      "id": "PY-TP-07",
+      "lang": "python",
+      "expect": "PY-SERIAL-001",
+      "got": [
+        "PY-SERIAL-001"
+      ],
+      "pass": true,
+      "ms": 0.26
+    },
+    {
+      "id": "PY-TP-08",
+      "lang": "python",
+      "expect": "PY-CODE-EXEC-001",
+      "got": [
+        "PY-CODE-EXEC-001"
+      ],
+      "pass": true,
+      "ms": 0.19
+    },
+    {
+      "id": "PY-TP-09",
+      "lang": "python",
+      "expect": "PY-CODE-EXEC-002",
+      "got": [
+        "PY-CODE-EXEC-002"
+      ],
+      "pass": true,
+      "ms": 0.14
+    },
+    {
+      "id": "PY-TP-10",
+      "lang": "python",
+      "expect": "PY-CRYPTO-001",
+      "got": [
+        "PY-CRYPTO-001"
+      ],
+      "pass": true,
+      "ms": 0.29
+    },
+    {
+      "id": "PY-TP-11",
+      "lang": "python",
+      "expect": "PY-CRYPTO-002",
+      "got": [
+        "PY-CRYPTO-002"
+      ],
+      "pass": true,
+      "ms": 0.27
+    },
+    {
+      "id": "PY-TP-12",
+      "lang": "python",
+      "expect": "PY-CONFIG-001",
+      "got": [
+        "PY-CONFIG-001"
+      ],
+      "pass": true,
+      "ms": 0.18
+    },
+    {
+      "id": "PY-FP-01",
+      "lang": "python",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 0.1
+    },
+    {
+      "id": "PY-FP-02",
+      "lang": "python",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 0.09
+    },
+    {
+      "id": "PY-FP-03",
+      "lang": "python",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 0.17
+    },
+    {
+      "id": "PY-FP-04",
+      "lang": "python",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 0.28
+    },
+    {
+      "id": "PY-FP-05",
+      "lang": "python",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 0.14
+    },
+    {
+      "id": "JS-TP-01",
+      "lang": "javascript",
+      "expect": "JS-CODE-EXEC-001",
+      "got": [
+        "JS-CODE-EXEC-001"
+      ],
+      "pass": true,
+      "ms": 25.97
+    },
+    {
+      "id": "JS-TP-02",
+      "lang": "javascript",
+      "expect": "JS-CODE-EXEC-002",
+      "got": [
+        "JS-CODE-EXEC-002"
+      ],
+      "pass": true,
+      "ms": 11.98
+    },
+    {
+      "id": "JS-TP-03",
+      "lang": "javascript",
+      "expect": "JS-SQLI-001",
+      "got": [
+        "JS-SQLI-001"
+      ],
+      "pass": true,
+      "ms": 4.95
+    },
+    {
+      "id": "JS-TP-04",
+      "lang": "javascript",
+      "expect": "JS-XSS-001",
+      "got": [
+        "JS-XSS-001"
+      ],
+      "pass": true,
+      "ms": 3.38
+    },
+    {
+      "id": "JS-TP-05",
+      "lang": "javascript",
+      "expect": "JS-XSS-001",
+      "got": [
+        "JS-XSS-001"
+      ],
+      "pass": true,
+      "ms": 7.97
+    },
+    {
+      "id": "JS-TP-06",
+      "lang": "javascript",
+      "expect": "JS-RANDOM-001",
+      "got": [
+        "JS-RANDOM-001"
+      ],
+      "pass": true,
+      "ms": 5.27
+    },
+    {
+      "id": "JS-TP-07",
+      "lang": "javascript",
+      "expect": "JS-SECRETS-001",
+      "got": [
+        "JS-SECRETS-001"
+      ],
+      "pass": true,
+      "ms": 6.29
+    },
+    {
+      "id": "JS-TP-08",
+      "lang": "javascript",
+      "expect": "JS-CONFIG-001",
+      "got": [
+        "JS-CONFIG-001"
+      ],
+      "pass": true,
+      "ms": 11.48
+    },
+    {
+      "id": "JS-TP-09",
+      "lang": "javascript",
+      "expect": "JS-JWT-001",
+      "got": [
+        "JS-JWT-001"
+      ],
+      "pass": true,
+      "ms": 2.62
+    },
+    {
+      "id": "JS-FP-01",
+      "lang": "javascript",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 5.27
+    },
+    {
+      "id": "JS-FP-02",
+      "lang": "javascript",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 1.95
+    },
+    {
+      "id": "JS-FP-03",
+      "lang": "javascript",
+      "expect": "JS-CRYPTO-001",
+      "got": [],
+      "pass": true,
+      "ms": 5.15
+    },
+    {
+      "id": "JS-FP-04",
+      "lang": "javascript",
+      "expect": null,
+      "got": [],
+      "pass": true,
+      "ms": 1.51
+    }
+  ]
+}

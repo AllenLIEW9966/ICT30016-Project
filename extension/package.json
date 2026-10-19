@@ -43,18 +43,18 @@
         },
         "secureCoding.aiApiBase": {
           "type": "string",
-          "default": "http://localhost:8001/v1",
-          "description": "AI API base URL"
+          "default": "http://localhost:11434/v1",
+          "description": "Local Ollama API base URL (100% on-device, NFR-02)"
         },
         "secureCoding.aiApiKey": {
           "type": "string",
-          "default": "",
+          "default": "ollama",
           "description": "API key for AI model"
         },
         "secureCoding.aiModel": {
           "type": "string",
-          "default": "gpt-4o-mini",
-          "description": "Model name for AI suggestions"
+          "default": "codellama:7b-instruct",
+          "description": "Local Ollama model for AI suggestions"
         }
       }
     }
