@@ -1,0 +1,14 @@
+{
+  "mode": "template-fallback",
+  "ai_samples": 10,
+  "ai_ok": 5,
+  "ai_latency_ms": {
+    "p50": 90010.4,
+    "p95": 90031.7,
+    "max": 90042.8
+  },
+  "ai_under_1500ms": false,
+  "backend_rss_mb": 34.3,
+  "worker_rss_mb": 15.5,
+  "under_6gb": true
+}

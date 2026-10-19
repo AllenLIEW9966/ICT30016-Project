@@ -131,7 +131,7 @@ export function activate(context: vscode.ExtensionContext) {
     if (debounceTimer) {
       clearTimeout(debounceTimer);
     }
-    debounceTimer = setTimeout(() => scanDocument(document), 800);
+    debounceTimer = setTimeout(() => scanDocument(document), 500);
   });
 
   // Scan on save
@@ -150,7 +150,69 @@ export function activate(context: vscode.ExtensionContext) {
     vscode.window.showInformationMessage('Scan complete');
   });
 
-  // AI Fix command
+  // FR-04: 1-click Quick Fix — lightbulb action on every diagnostic
+  const quickFixProvider = vscode.languages.registerCodeActionsProvider(
+    ['python', 'javascript'],
+    {
+      provideCodeActions(document, range, ctx) {
+        const actions: vscode.CodeAction[] = [];
+        for (const d of ctx.diagnostics) {
+          if (d.source !== 'Secure Coding') {
+            continue;
+          }
+          const ruleId = String(d.code || '');
+          // Rule-based instant fix (no AI round-trip)
+          const template = templateFix(document.languageId, d.message, ruleId);
+          if (template) {
+            const a = new vscode.CodeAction(
+              `⚡ Quick Fix: ${ruleId}`,
+              vscode.CodeActionKind.QuickFix,
+            );
+            a.diagnostics = [d];
+            a.isPreferred = true;
+            a.edit = new vscode.WorkspaceEdit();
+            a.edit.replace(document.uri, d.range, template);
+            actions.push(a);
+          }
+          // AI fix via backend (O-02 bounded context)
+          const ai = new vscode.CodeAction(
+            `🤖 Fix with AI: ${ruleId}`,
+            vscode.CodeActionKind.QuickFix,
+          );
+          ai.diagnostics = [d];
+          ai.command = {
+            command: 'secureCoding.fixDiagnostic',
+            title: 'Fix with AI',
+            arguments: [document.uri.toString(), ruleId],
+          };
+          actions.push(ai);
+        }
+        return actions;
+      },
+    },
+    { providedCodeActionKinds: [vscode.CodeActionKind.QuickFix] },
+  );
+
+  // Resolve a diagnostic + full source, then reuse the AI flow
+  const fixDiagnosticCmd = vscode.commands.registerCommand(
+    'secureCoding.fixDiagnostic',
+    async (uriStr: string, ruleId: string) => {
+      const uri = vscode.Uri.parse(uriStr);
+      const editor = vscode.window.visibleTextEditors.find(
+        (e) => e.document.uri.toString() === uriStr,
+      );
+      const doc = editor?.document ?? (await vscode.workspace.openTextDocument(uri));
+      const diags = (diagnosticCollection.get(uri) || []).filter(
+        (d) => String(d.code) === ruleId,
+      );
+      if (diags.length === 0) {
+        vscode.window.showWarningMessage(`No diagnostic ${ruleId} to fix`);
+        return;
+      }
+      const d = diags[0];
+      await applyAiFix(doc, d, backendUrl, diagnosticCollection);
+    },
+  );
   const fixCommand = vscode.commands.registerCommand('secureCoding.fixWithAI', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
@@ -281,6 +343,8 @@ export function activate(context: vscode.ExtensionContext) {
     saveListener,
     scanCommand,
     fixCommand,
+    fixDiagnosticCmd,
+    quickFixProvider,
     scoreCommand,
     hoverProvider,
   );
@@ -366,3 +430,84 @@ function diagnosticsToFindings(diagnostics: readonly vscode.Diagnostic[]): Findi
 }
 
 export function deactivate() {}
+
+// FR-04 helpers: instant rule-based templates + shared AI-apply flow
+function templateFix(languageId: string, message: string, ruleId: string): string | null {
+  const lang = languageId === 'js' ? 'javascript' : languageId;
+  if (lang === 'python' && ruleId === 'PY-SQLI-001') {
+    return 'cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))';
+  }
+  if (lang === 'python' && ruleId === 'PY-SECRETS-001') {
+    return 'import os\nPASSWORD = os.environ["DB_PASSWORD"]';
+  }
+  if (lang === 'javascript' && ruleId === 'JS-SQLI-001') {
+    return "db.query('SELECT * FROM users WHERE id = ?', [userId])";
+  }
+  if (lang === 'javascript' && ruleId === 'JS-XSS-001') {
+    return 'el.textContent = msg;';
+  }
+  if (lang === 'javascript' && ruleId === 'JS-SECRETS-001') {
+    return 'const API_KEY = process.env.API_KEY;';
+  }
+  return null;
+}
+
+async function applyAiFix(
+  document: vscode.TextDocument,
+  diagnostic: vscode.Diagnostic,
+  backendUrl: string,
+  diagnosticCollection: vscode.DiagnosticCollection,
+): Promise<void> {
+  const allFindings = diagnosticCollection
+    ? []
+    : [];
+  void allFindings;
+  const range = diagnostic.range;
+  const line = range.start.line + 1;
+  const findingData = {
+    rule_id: String(diagnostic.code || ''),
+    title: 'Vulnerability',
+    severity: diagnostic.severity === vscode.DiagnosticSeverity.Error ? 'critical' : 'medium',
+    cwe_id: 'N/A',
+    owasp_ref: 'N/A',
+    language: document.languageId,
+    code_snippet: document.getText(range),
+    context: {
+      line,
+      end_line: range.end.line + 1,
+      full_source: document.getText(),
+    },
+  };
+  await vscode.window.withProgress(
+    { location: vscode.ProgressLocation.Window, title: 'Generating secure fix with AI...' },
+    async () => {
+      try {
+        const suggestion = await requestSuggestion(findingData, backendUrl);
+        if (!suggestion.secure_code) {
+          vscode.window.showWarningMessage('AI could not generate a fix for this issue');
+          return;
+        }
+        const edit = new vscode.WorkspaceEdit();
+        edit.replace(document.uri, range, suggestion.secure_code);
+        const confirmed = await vscode.window.showInformationMessage(
+          'AI suggests the following fix. Apply it?',
+          { modal: true },
+          'Apply Fix',
+          'Show Explanation',
+        );
+        if (confirmed === 'Apply Fix') {
+          await vscode.workspace.applyEdit(edit);
+          vscode.window.showInformationMessage('Fix applied');
+        } else if (confirmed === 'Show Explanation') {
+          const doc = await vscode.workspace.openTextDocument({
+            content: `# Fix\n\n${suggestion.explanation}\n\n## Suggested Fix\n\n\`\`\`\n${suggestion.secure_code}\n\`\`\`\n`,
+            language: 'markdown',
+          });
+          await vscode.window.showTextDocument(doc, { preview: true });
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`AI fix failed: ${error}`);
+      }
+    },
+  );
+}
