@@ -31,6 +31,14 @@
       {
         "command": "secureCoding.showSecurityScore",
         "title": "Secure Coding: Show Security Score"
+      },
+      {
+        "command": "secureCoding.showBackendLog",
+        "title": "Secure Coding: Show Backend Log"
+      },
+      {
+        "command": "secureCoding.installLocalAI",
+        "title": "Secure Coding: Install Local AI (Ollama)"
       }
     ],
     "configuration": {
@@ -62,7 +70,8 @@
   "scripts": {
     "vscode:prepublish": "npm run compile",
     "compile": "tsc -p ./",
-    "watch": "tsc -watch -p ./"
+    "watch": "tsc -watch -p ./",
+    "package": "vsce package --no-dependencies"
   },
   "devDependencies": {
     "@types/node": "^20.x",
