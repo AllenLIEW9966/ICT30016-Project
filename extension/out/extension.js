@@ -36,10 +36,16 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
 const vscode = __importStar(require("vscode"));
+const backendManager_1 = require("./backendManager");
+// C3: secrets storage, populated during activate
+let secretStorage;
 function activate(context) {
     console.log('Secure Coding Assistant is now active');
-    vscode.window.showInformationMessage('🔒 Secure Coding Assistant activated');
     const backendUrl = vscode.workspace.getConfiguration('secureCoding').get('backendUrl', 'http://localhost:8000');
+    const ollamaUrl = vscode.workspace.getConfiguration('secureCoding').get('aiApiBase', 'http://localhost:11434/v1').replace('/v1', '');
+    const backend = new backendManager_1.BackendManager(backendUrl, ollamaUrl);
+    secretStorage = context.secrets;
+    context.subscriptions.push({ dispose: () => backend.dispose() });
     const diagnosticCollection = vscode.languages.createDiagnosticCollection('secureCoding');
     context.subscriptions.push(diagnosticCollection);
     // Keep finding metadata keyed by document URI so hover/fix can access OWASP/CWE/suggestion
@@ -51,6 +57,13 @@ function activate(context) {
     statusBarItem.text = '🔒 ?';
     statusBarItem.show();
     context.subscriptions.push(statusBarItem);
+    // B: AI status bar item
+    const aiStatusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 99);
+    aiStatusBarItem.command = 'secureCoding.installLocalAI';
+    aiStatusBarItem.tooltip = 'Local AI status — click to install Ollama';
+    aiStatusBarItem.text = '$(sync~spin) AI';
+    aiStatusBarItem.show();
+    context.subscriptions.push(aiStatusBarItem);
     let debounceTimer;
     async function scanDocument(document) {
         const language = document.languageId;
@@ -294,12 +307,35 @@ function activate(context) {
             return new vscode.Hover(markdown);
         },
     });
-    context.subscriptions.push(changeListener, saveListener, scanCommand, fixCommand, fixDiagnosticCmd, quickFixProvider, scoreCommand, hoverProvider);
-    // Scan active file on activation
-    const activeEditor = vscode.window.activeTextEditor;
-    if (activeEditor) {
-        scanDocument(activeEditor.document);
-    }
+    context.subscriptions.push(changeListener, saveListener, scanCommand, fixCommand, fixDiagnosticCmd, quickFixProvider, scoreCommand, vscode.commands.registerCommand('secureCoding.showBackendLog', () => backend.showLog()), vscode.commands.registerCommand('secureCoding.installLocalAI', async () => {
+        const model = vscode.workspace.getConfiguration('secureCoding').get('aiModel', 'codellama:7b-instruct');
+        const choice = await vscode.window.showInformationMessage('Install local AI (Ollama) for AI-powered fixes?', { modal: true }, 'Open Ollama website', 'Download & install model');
+        if (choice === 'Open Ollama website') {
+            await vscode.env.openExternal(vscode.Uri.parse('https://ollama.com/download'));
+        }
+        else if (choice === 'Download & install model') {
+            const terminal = vscode.window.createTerminal('Ollama Install');
+            terminal.sendText(`ollama pull ${model}`);
+            terminal.show();
+            vscode.window.showInformationMessage(`Pulling ${model} in terminal. AI fixes will work once the download completes.`);
+        }
+    }), hoverProvider);
+    // A1: ensure backend is up before first scan (bundled exe, zero terminal)
+    void (async () => {
+        const ok = await backend.ensureRunning(context, statusBarItem);
+        statusBarItem.text = ok ? '🔒 CodeShield' : '🔒 CodeShield (offline)';
+        aiStatusBarItem.text = backend.ollamaStatusText();
+        aiStatusBarItem.tooltip = backend.isOllamaModelAvailable()
+            ? 'Local AI ready — click to reinstall Ollama'
+            : 'Local AI not available — click to install Ollama';
+        if (ok) {
+            const activeEditor = vscode.window.activeTextEditor;
+            if (activeEditor) {
+                void scanDocument(activeEditor.document);
+            }
+        }
+    })();
+    // Scan active file on activation (after backend ready, see above)
 }
 function findingsToRequest(diagnostic, document) {
     const range = diagnostic.range;
@@ -317,9 +353,10 @@ function findingsToRequest(diagnostic, document) {
     return { findingData, range };
 }
 async function requestSuggestion(findingData, backendUrl) {
+    // C3: read AI API key from VS Code secrets (never plaintext config)
     const aiConfig = {
         ai_api_base: vscode.workspace.getConfiguration('secureCoding').get('aiApiBase', 'http://localhost:11434/v1'),
-        ai_api_key: vscode.workspace.getConfiguration('secureCoding').get('aiApiKey', 'ollama'),
+        ai_api_key: await secretStorage?.get('secureCoding.aiApiKey') ?? 'ollama',
         ai_model: vscode.workspace.getConfiguration('secureCoding').get('aiModel', 'codellama:7b-instruct'),
     };
     const response = await fetch(`${backendUrl}/suggest-fix`, {

@@ -12,4 +12,5 @@ RUN cd js-ast && npm install --omit=dev --no-audit --no-fund
 COPY . .
 
 EXPOSE 8000
-CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# C7: bind loopback only in container; override with -p to map. Use reverse proxy for remote access.
+CMD ["uvicorn", "app.main:app", "--host", "127.0.0.1", "--port", "8000"]

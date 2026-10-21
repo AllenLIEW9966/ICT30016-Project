@@ -12,9 +12,9 @@
   "m25_patch_rate": 0.857,
   "m25_hits": "18/21",
   "m25_pass": true,
-  "nfr01_scan_p50_ms": 0.54,
-  "nfr01_scan_p95_ms": 11.48,
-  "nfr01_scan_max_ms": 25.97,
+  "nfr01_scan_p50_ms": 0.21,
+  "nfr01_scan_p95_ms": 2.12,
+  "nfr01_scan_max_ms": 3.25,
   "nfr01_under_100ms": true,
   "rows": [
     {
@@ -25,7 +25,7 @@
         "PY-SQLI-001"
       ],
       "pass": true,
-      "ms": 10.25
+      "ms": 2.12
     },
     {
       "id": "PY-TP-02",
@@ -35,7 +35,7 @@
         "PY-SQLI-001"
       ],
       "pass": true,
-      "ms": 0.54
+      "ms": 0.21
     },
     {
       "id": "PY-TP-03",
@@ -45,7 +45,7 @@
         "PY-CMD-001"
       ],
       "pass": true,
-      "ms": 0.28
+      "ms": 0.13
     },
     {
       "id": "PY-TP-04",
@@ -55,7 +55,7 @@
         "PY-SECRETS-001"
       ],
       "pass": true,
-      "ms": 0.25
+      "ms": 0.07
     },
     {
       "id": "PY-TP-05",
@@ -65,7 +65,7 @@
         "PY-PATH-001"
       ],
       "pass": true,
-      "ms": 0.28
+      "ms": 0.11
     },
     {
       "id": "PY-TP-06",
@@ -75,7 +75,7 @@
         "PY-SSRF-001"
       ],
       "pass": true,
-      "ms": 0.25
+      "ms": 0.1
     },
     {
       "id": "PY-TP-07",
@@ -85,7 +85,7 @@
         "PY-SERIAL-001"
       ],
       "pass": true,
-      "ms": 0.26
+      "ms": 0.09
     },
     {
       "id": "PY-TP-08",
@@ -95,7 +95,7 @@
         "PY-CODE-EXEC-001"
       ],
       "pass": true,
-      "ms": 0.19
+      "ms": 0.06
     },
     {
       "id": "PY-TP-09",
@@ -105,7 +105,7 @@
         "PY-CODE-EXEC-002"
       ],
       "pass": true,
-      "ms": 0.14
+      "ms": 0.05
     },
     {
       "id": "PY-TP-10",
@@ -115,7 +115,7 @@
         "PY-CRYPTO-001"
       ],
       "pass": true,
-      "ms": 0.29
+      "ms": 0.09
     },
     {
       "id": "PY-TP-11",
@@ -125,7 +125,7 @@
         "PY-CRYPTO-002"
       ],
       "pass": true,
-      "ms": 0.27
+      "ms": 0.08
     },
     {
       "id": "PY-TP-12",
@@ -135,7 +135,7 @@
         "PY-CONFIG-001"
       ],
       "pass": true,
-      "ms": 0.18
+      "ms": 0.05
     },
     {
       "id": "PY-FP-01",
@@ -143,7 +143,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 0.1
+      "ms": 0.04
     },
     {
       "id": "PY-FP-02",
@@ -151,7 +151,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 0.09
+      "ms": 0.04
     },
     {
       "id": "PY-FP-03",
@@ -159,7 +159,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 0.17
+      "ms": 0.08
     },
     {
       "id": "PY-FP-04",
@@ -167,7 +167,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 0.28
+      "ms": 0.12
     },
     {
       "id": "PY-FP-05",
@@ -175,7 +175,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 0.14
+      "ms": 0.06
     },
     {
       "id": "JS-TP-01",
@@ -185,7 +185,7 @@
         "JS-CODE-EXEC-001"
       ],
       "pass": true,
-      "ms": 25.97
+      "ms": 3.25
     },
     {
       "id": "JS-TP-02",
@@ -195,7 +195,7 @@
         "JS-CODE-EXEC-002"
       ],
       "pass": true,
-      "ms": 11.98
+      "ms": 1.53
     },
     {
       "id": "JS-TP-03",
@@ -205,7 +205,7 @@
         "JS-SQLI-001"
       ],
       "pass": true,
-      "ms": 4.95
+      "ms": 2.36
     },
     {
       "id": "JS-TP-04",
@@ -215,7 +215,7 @@
         "JS-XSS-001"
       ],
       "pass": true,
-      "ms": 3.38
+      "ms": 1.35
     },
     {
       "id": "JS-TP-05",
@@ -225,7 +225,7 @@
         "JS-XSS-001"
       ],
       "pass": true,
-      "ms": 7.97
+      "ms": 1.09
     },
     {
       "id": "JS-TP-06",
@@ -235,7 +235,7 @@
         "JS-RANDOM-001"
       ],
       "pass": true,
-      "ms": 5.27
+      "ms": 1.49
     },
     {
       "id": "JS-TP-07",
@@ -245,7 +245,7 @@
         "JS-SECRETS-001"
       ],
       "pass": true,
-      "ms": 6.29
+      "ms": 0.89
     },
     {
       "id": "JS-TP-08",
@@ -255,7 +255,7 @@
         "JS-CONFIG-001"
       ],
       "pass": true,
-      "ms": 11.48
+      "ms": 0.81
     },
     {
       "id": "JS-TP-09",
@@ -265,7 +265,7 @@
         "JS-JWT-001"
       ],
       "pass": true,
-      "ms": 2.62
+      "ms": 1.1
     },
     {
       "id": "JS-FP-01",
@@ -273,7 +273,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 5.27
+      "ms": 1.04
     },
     {
       "id": "JS-FP-02",
@@ -281,7 +281,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 1.95
+      "ms": 1.28
     },
     {
       "id": "JS-FP-03",
@@ -289,7 +289,7 @@
       "expect": "JS-CRYPTO-001",
       "got": [],
       "pass": true,
-      "ms": 5.15
+      "ms": 0.95
     },
     {
       "id": "JS-FP-04",
@@ -297,7 +297,7 @@
       "expect": null,
       "got": [],
       "pass": true,
-      "ms": 1.51
+      "ms": 0.55
     }
   ]
 }

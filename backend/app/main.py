@@ -13,7 +13,8 @@ app = FastAPI(
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    # C7: restrict CORS to loopback origins only — never wildcard in production.
+    allow_origin_regex=r"https?://(localhost|127\.0\.0\.1)(:\d+)?",
     allow_methods=["*"],
     allow_headers=["*"],
 )
@@ -29,5 +30,19 @@ async def root():
 
 
 if __name__ == "__main__":
+    import sys
     import uvicorn
-    uvicorn.run("app.main:app", host="127.0.0.1", port=8000, reload=True)
+    host, port = "127.0.0.1", 8000
+    args = sys.argv[1:]
+    for i, a in enumerate(args):
+        if a == "--host" and i + 1 < len(args):
+            host = args[i + 1]
+        if a == "--port" and i + 1 < len(args):
+            try:
+                port = int(args[i + 1])
+            except ValueError:
+                pass
+    # A1/C7: frozen exe binds loopback only; never 0.0.0.0 from the manager.
+    if host not in ("127.0.0.1", "localhost", "::1"):
+        host = "127.0.0.1"
+    uvicorn.run("app.main:app", host=host, port=port, reload=False)
