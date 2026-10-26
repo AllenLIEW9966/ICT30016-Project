@@ -1,6 +1,9 @@
 node_modules/
-out/
 dist/
 *.log
 .DS_Store
 .vscode-test/
+
+# Compiled output is needed as extension entrypoint
+!out/extension.js
+!out/extension.js.map
