@@ -13,6 +13,21 @@ _USER_INPUT_ATTRS = {"args", "form", "values", "cookies", "headers", "data", "GE
 _SANITIZE_FUNCS = {"escape", "sanitize", "quote", "escape_string"}
 
 
+def _is_environ_access(expr: ast.AST) -> bool:
+    """Check if expr is os.environ[...] or os.environ.get(...)."""
+    if isinstance(expr, ast.Call):
+        f = expr.func
+        if isinstance(f, ast.Attribute) and f.attr in {"getenv", "get"}:
+            if isinstance(f.value, ast.Attribute) and f.value.attr == "environ":
+                if isinstance(f.value.value, ast.Name) and f.value.value.id == "os":
+                    return True
+    if isinstance(expr, ast.Subscript):
+        if isinstance(expr.value, ast.Attribute) and expr.value.attr == "environ":
+            if isinstance(expr.value.value, ast.Name) and expr.value.value.id == "os":
+                return True
+    return False
+
+
 def _origin_of(expr: ast.AST, assignments: dict[str, str]) -> str:
     """Classify expression origin: CONSTANT, USER_INPUT, SANITIZED, DYNAMIC, UNKNOWN."""
     if isinstance(expr, ast.Constant):
@@ -29,6 +44,11 @@ def _origin_of(expr: ast.AST, assignments: dict[str, str]) -> str:
             return "SANITIZED"
         # os.environ.get / os.getenv -> not hardcoded, safe source
         if isinstance(f, ast.Attribute) and f.attr in {"getenv", "get"}:
+            return "ENV"
+        return "DYNAMIC"
+    if isinstance(expr, ast.Subscript):
+        # os.environ["KEY"] -> not hardcoded, safe source
+        if _is_environ_access(expr):
             return "ENV"
         return "DYNAMIC"
     if isinstance(expr, (ast.JoinedStr, ast.BinOp)):

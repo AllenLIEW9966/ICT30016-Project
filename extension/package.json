@@ -39,6 +39,10 @@
       {
         "command": "secureCoding.installLocalAI",
         "title": "Secure Coding: Install Local AI (Ollama)"
+      },
+      {
+        "command": "secureCoding.fixAllFile",
+        "title": "Secure Coding: Fix All Vulnerabilities in File"
       }
     ],
     "configuration": {
@@ -61,7 +65,7 @@
         },
         "secureCoding.aiModel": {
           "type": "string",
-          "default": "codellama:7b-instruct",
+          "default": "qwen2.5-coder:1.5b-instruct",
           "description": "Local Ollama model for AI suggestions"
         }
       }
@@ -76,6 +80,7 @@
   "devDependencies": {
     "@types/node": "^20.x",
     "@types/vscode": "^1.85.0",
+    "@vscode/vsce": "^4.0.0",
     "typescript": "^5.3.0"
   }
 }

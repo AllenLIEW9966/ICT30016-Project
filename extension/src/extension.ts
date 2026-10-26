@@ -363,7 +363,7 @@ export function activate(context: vscode.ExtensionContext) {
     scoreCommand,
     vscode.commands.registerCommand('secureCoding.showBackendLog', () => backend.showLog()),
     vscode.commands.registerCommand('secureCoding.installLocalAI', async () => {
-      const model = vscode.workspace.getConfiguration('secureCoding').get<string>('aiModel', 'codellama:7b-instruct');
+      const model = vscode.workspace.getConfiguration('secureCoding').get<string>('aiModel', 'qwen2.5-coder:1.5b-instruct');
       const choice = await vscode.window.showInformationMessage(
         'Install local AI (Ollama) for AI-powered fixes?',
         { modal: true },
@@ -380,6 +380,14 @@ export function activate(context: vscode.ExtensionContext) {
           `Pulling ${model} in terminal. AI fixes will work once the download completes.`,
         );
       }
+    }),
+    vscode.commands.registerCommand('secureCoding.fixAllFile', async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor) {
+        vscode.window.showWarningMessage('No active editor');
+        return;
+      }
+      await fixAllFile(editor.document, diagnosticCollection, findingsByUri, () => scanDocument(editor.document));
     }),
     hoverProvider,
   );
@@ -475,6 +483,51 @@ function diagnosticsToFindings(diagnostics: readonly vscode.Diagnostic[]): Findi
     suggestion: (d as any).suggestion || '',
     code_snippet: '',
   }));
+}
+
+// FR-04: Fix All Current File — applies every rule-based template fix at once
+async function fixAllFile(
+  document: vscode.TextDocument,
+  diagnosticCollection: vscode.DiagnosticCollection,
+  findingsByUri: Map<vscode.Uri, Finding[]>,
+  rescan: () => void | Promise<void>,
+): Promise<void> {
+  const diagnostics = diagnosticCollection.get(document.uri) || [];
+
+  const edits: { range: vscode.Range; newText: string }[] = [];
+
+  for (const d of diagnostics) {
+    if (d.source !== 'Secure Coding') continue;
+    const ruleId = String(d.code || '');
+    const template = templateFix(document.languageId, d.message, ruleId);
+    if (template) {
+      edits.push({ range: d.range, newText: template });
+    }
+  }
+
+  if (edits.length === 0) {
+    vscode.window.showInformationMessage('No fixable vulnerabilities found in this file');
+    return;
+  }
+
+  // Sort by start line descending so replacements don't invalidate earlier ranges
+  edits.sort((a, b) => b.range.start.line - a.range.start.line || b.range.start.character - a.range.start.character);
+
+  const edit = new vscode.WorkspaceEdit();
+  for (const e of edits) {
+    edit.replace(document.uri, e.range, e.newText);
+  }
+
+  const fixedCount = edits.length;
+  const fileName = document.uri.path.split(/[\\/]/).pop() || document.uri.toString();
+  const applied = await vscode.workspace.applyEdit(edit);
+  if (applied) {
+    vscode.window.showInformationMessage(`Applied ${fixedCount} quick fix(es) to ${fileName}`);
+    // Re-scan after fixes to clear resolved diagnostics
+    void rescan();
+  } else {
+    vscode.window.showErrorMessage('Failed to apply fixes');
+  }
 }
 
 export function deactivate() {}

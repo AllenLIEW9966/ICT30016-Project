@@ -72,7 +72,7 @@ async def suggest_fix(
 
     api_base = context.get("ai_api_base", "http://localhost:11434/v1")
     api_key = context.get("ai_api_key", "ollama")
-    model = context.get("ai_model", "codellama:7b-instruct")
+    model = context.get("ai_model", "qwen2.5-coder:1.5b-instruct")
 
     # O-02 fallback: deterministic patch when the local LLM is unreachable
     def _fallback() -> dict[str, Any] | None:
