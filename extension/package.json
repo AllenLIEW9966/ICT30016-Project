@@ -65,6 +65,11 @@
         },
         "secureCoding.aiModel": {
           "type": "string",
+          "enum": ["qwen2.5-coder:1.5b-instruct", "codellama:7b-instruct"],
+          "enumDescriptions": [
+            "Small, fast model — good for CPU-only machines (~1 GB)",
+            "Larger, more capable model — needs more RAM (~4 GB)"
+          ],
           "default": "qwen2.5-coder:1.5b-instruct",
           "description": "Local Ollama model for AI suggestions"
         }

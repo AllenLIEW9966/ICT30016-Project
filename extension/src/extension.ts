@@ -363,7 +363,6 @@ export function activate(context: vscode.ExtensionContext) {
     scoreCommand,
     vscode.commands.registerCommand('secureCoding.showBackendLog', () => backend.showLog()),
     vscode.commands.registerCommand('secureCoding.installLocalAI', async () => {
-      const model = vscode.workspace.getConfiguration('secureCoding').get<string>('aiModel', 'qwen2.5-coder:1.5b-instruct');
       const choice = await vscode.window.showInformationMessage(
         'Install local AI (Ollama) for AI-powered fixes?',
         { modal: true },
@@ -373,12 +372,21 @@ export function activate(context: vscode.ExtensionContext) {
       if (choice === 'Open Ollama website') {
         await vscode.env.openExternal(vscode.Uri.parse('https://ollama.com/download'));
       } else if (choice === 'Download & install model') {
-        const terminal = vscode.window.createTerminal('Ollama Install');
-        terminal.sendText(`ollama pull ${model}`);
-        terminal.show();
-        vscode.window.showInformationMessage(
-          `Pulling ${model} in terminal. AI fixes will work once the download completes.`,
+        const selectedModel = await vscode.window.showQuickPick(
+          [
+            { label: 'qwen2.5-coder:1.5b-instruct', description: 'Small, fast (~1 GB) — recommended default' },
+            { label: 'codellama:7b-instruct', description: 'Larger, more capable (~4 GB)' },
+          ],
+          { placeHolder: 'Select model to install with Ollama' },
         );
+        if (selectedModel) {
+          const terminal = vscode.window.createTerminal('Ollama Install');
+          terminal.sendText(`ollama pull ${selectedModel.label}`);
+          terminal.show();
+          vscode.window.showInformationMessage(
+            `Pulling ${selectedModel.label} in terminal. AI fixes will work once the download completes.`,
+          );
+        }
       }
     }),
     vscode.commands.registerCommand('secureCoding.fixAllFile', async () => {
@@ -446,7 +454,7 @@ async function requestSuggestion(findingData: {
   const aiConfig = {
     ai_api_base: vscode.workspace.getConfiguration('secureCoding').get<string>('aiApiBase', 'http://localhost:11434/v1'),
     ai_api_key: await secretStorage?.get('secureCoding.aiApiKey') ?? 'ollama',
-    ai_model: vscode.workspace.getConfiguration('secureCoding').get<string>('aiModel', 'codellama:7b-instruct'),
+    ai_model: vscode.workspace.getConfiguration('secureCoding').get<string>('aiModel', 'qwen2.5-coder:1.5b-instruct'),
   };
 
   const response = await fetch(`${backendUrl}/suggest-fix`, {
