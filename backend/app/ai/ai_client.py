@@ -70,6 +70,7 @@ async def suggest_fix(
         snippet=snippet,
     )
 
+    api_provider = context.get("ai_provider", "ollama")
     api_base = context.get("ai_api_base", "http://localhost:11434/v1")
     api_key = context.get("ai_api_key", "ollama")
     model = context.get("ai_model", "qwen2.5-coder:1.5b-instruct")
@@ -92,15 +93,12 @@ async def suggest_fix(
     }
 
     try:
-        async with httpx.AsyncClient(timeout=180) as client:
-            response = await client.post(
-                f"{api_base}/chat/completions",
-                headers={"Authorization": f"Bearer {api_key}"},
-                json=payload,
-            )
-            response.raise_for_status()
-            data = response.json()
-            content = data["choices"][0]["message"]["content"]
+        if api_provider == "ollama":
+            content = await _call_ollama(api_base, api_key, model, prompt)
+        elif api_provider in ("cloud", "openai", "anthropic"):
+            content = await _call_openai_compatible(api_base, api_key, model, prompt)
+        else:
+            raise ValueError(f"Unknown AI provider: {api_provider}")
     except Exception:
         fb = _fallback()
         if fb is not None:
@@ -124,3 +122,43 @@ async def suggest_fix(
             "secure_code": secure_code,
             "references": refs,
         }
+
+async def _call_ollama(api_base: str, api_key: str, model: str, prompt: str) -> str:
+    async with httpx.AsyncClient(timeout=180) as client:
+        response = await client.post(
+            f"{api_base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.2,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
+
+
+async def _call_openai_compatible(api_base: str, api_key: str, model: str, prompt: str) -> str:
+    base = api_base.rstrip("/")
+    if not base:
+        base = "https://api.openai.com/v1"
+    async with httpx.AsyncClient(timeout=180) as client:
+        response = await client.post(
+            f"{base}/chat/completions",
+            headers={"Authorization": f"Bearer {api_key}"},
+            json={
+                "model": model,
+                "messages": [
+                    {"role": "system", "content": "Return only valid JSON."},
+                    {"role": "user", "content": prompt},
+                ],
+                "temperature": 0.2,
+            },
+        )
+        response.raise_for_status()
+        data = response.json()
+        return data["choices"][0]["message"]["content"]
