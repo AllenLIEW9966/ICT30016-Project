@@ -202,6 +202,23 @@ function activate(context) {
             return;
         }
         const d = diags[0];
+        // Graceful fallback: if Ollama model is not available, offer rule-based fix instead
+        if (!backend.isOllamaModelAvailable()) {
+            const choice = await vscode.window.showInformationMessage(`AI model not available for rule ${ruleId}.`, { modal: true }, 'Download Model', 'Use Rule-Based Fix Instead', 'Read Setup Guide');
+            if (choice === 'Download Model') {
+                await vscode.commands.executeCommand('secureCoding.installLocalAI');
+                return;
+            }
+            if (choice === 'Use Rule-Based Fix Instead') {
+                await applyTemplateFix(doc, d, diagnosticCollection);
+                return;
+            }
+            if (choice === 'Read Setup Guide') {
+                await vscode.env.openExternal(vscode.Uri.parse('https://github.com/AllenLIEW9966/ICT30016-Project.git'));
+                return;
+            }
+            return;
+        }
         await applyAiFix(doc, d, backendUrl, diagnosticCollection);
     });
     const fixCommand = vscode.commands.registerCommand('secureCoding.fixWithAI', async () => {
@@ -226,6 +243,23 @@ function activate(context) {
         const matchedFinding = allFindings.find((f) => f.rule_id === diagnostic.code);
         if (!matchedFinding) {
             vscode.window.showErrorMessage('Could not find vulnerability details for this diagnostic');
+            return;
+        }
+        // Graceful fallback: if Ollama model is not available, offer rule-based fix instead
+        if (!backend.isOllamaModelAvailable()) {
+            const choice = await vscode.window.showInformationMessage(`AI model not available for rule ${diagnostic.code}.`, { modal: true }, 'Download Model', 'Use Rule-Based Fix Instead', 'Read Setup Guide');
+            if (choice === 'Download Model') {
+                await vscode.commands.executeCommand('secureCoding.installLocalAI');
+                return;
+            }
+            if (choice === 'Use Rule-Based Fix Instead') {
+                await applyTemplateFix(document, diagnostic, diagnosticCollection);
+                return;
+            }
+            if (choice === 'Read Setup Guide') {
+                await vscode.env.openExternal(vscode.Uri.parse('https://github.com/AllenLIEW9966/ICT30016-Project.git'));
+                return;
+            }
             return;
         }
         const range = diagnostic.range;
@@ -308,20 +342,49 @@ function activate(context) {
         },
     });
     context.subscriptions.push(changeListener, saveListener, scanCommand, fixCommand, fixDiagnosticCmd, quickFixProvider, scoreCommand, vscode.commands.registerCommand('secureCoding.showBackendLog', () => backend.showLog()), vscode.commands.registerCommand('secureCoding.installLocalAI', async () => {
-        const choice = await vscode.window.showInformationMessage('Install local AI (Ollama) for AI-powered fixes?', { modal: true }, 'Open Ollama website', 'Download & install model');
+        const choice = await vscode.window.showInformationMessage('Set up AI provider for CodeShield?', { modal: true }, 'Use Local Ollama (Private, Default)', 'Use Cloud AI (OpenAI / Anthropic)', 'Open Ollama website');
         if (choice === 'Open Ollama website') {
             await vscode.env.openExternal(vscode.Uri.parse('https://ollama.com/download'));
         }
-        else if (choice === 'Download & install model') {
+        else if (choice === 'Use Local Ollama (Private, Default)') {
             const selectedModel = await vscode.window.showQuickPick([
                 { label: 'qwen2.5-coder:1.5b-instruct', description: 'Small, fast (~1 GB) — recommended default' },
                 { label: 'codellama:7b-instruct', description: 'Larger, more capable (~4 GB)' },
-            ], { placeHolder: 'Select model to install with Ollama' });
+            ], { placeHolder: 'Select local Ollama model' });
             if (selectedModel) {
+                await vscode.workspace.getConfiguration('secureCoding').update('aiProvider', 'ollama', true);
+                await vscode.workspace.getConfiguration('secureCoding').update('aiModel', selectedModel.label, true);
                 const terminal = vscode.window.createTerminal('Ollama Install');
                 terminal.sendText(`ollama pull ${selectedModel.label}`);
                 terminal.show();
-                vscode.window.showInformationMessage(`Pulling ${selectedModel.label} in terminal. AI fixes will work once the download completes.`);
+                vscode.window.showInformationMessage(`Pulling ${selectedModel.label}. AI fixes will work once download completes.`);
+            }
+        }
+        else if (choice === 'Use Cloud AI (OpenAI / Anthropic)') {
+            const providerChoice = await vscode.window.showQuickPick([
+                { label: 'OpenAI', description: 'GPT-4o Mini, GPT-3.5 Turbo' },
+                { label: 'Anthropic', description: 'Claude 3 Haiku' },
+            ], { placeHolder: 'Select cloud AI provider' });
+            if (!providerChoice)
+                return;
+            const apiKey = await vscode.window.showInputBox({
+                prompt: `Enter your ${providerChoice.label} API key`,
+                password: true,
+            });
+            if (apiKey) {
+                await vscode.workspace.getConfiguration('secureCoding').update('aiProvider', 'cloud', true);
+                await vscode.workspace.getConfiguration('secureCoding').update('aiApiKey', apiKey, true);
+                const modelMap = {
+                    OpenAI: 'gpt-4o-mini',
+                    Anthropic: 'claude-3-haiku-20240307',
+                };
+                const modelBase = modelMap[providerChoice.label] ?? 'gpt-4o-mini';
+                await vscode.workspace.getConfiguration('secureCoding').update('aiModel', modelBase, true);
+                const apiBase = providerChoice.label === 'Anthropic'
+                    ? 'https://api.anthropic.com/v1'
+                    : 'https://api.openai.com/v1';
+                await vscode.workspace.getConfiguration('secureCoding').update('cloudApiBase', apiBase, true);
+                vscode.window.showInformationMessage(`${providerChoice.label} AI configured. AI fixes are ready.`);
             }
         }
     }), vscode.commands.registerCommand('secureCoding.fixAllFile', async () => {
@@ -370,6 +433,8 @@ async function requestSuggestion(findingData, backendUrl) {
         ai_api_base: vscode.workspace.getConfiguration('secureCoding').get('aiApiBase', 'http://localhost:11434/v1'),
         ai_api_key: await secretStorage?.get('secureCoding.aiApiKey') ?? 'ollama',
         ai_model: vscode.workspace.getConfiguration('secureCoding').get('aiModel', 'qwen2.5-coder:1.5b-instruct'),
+        ai_provider: vscode.workspace.getConfiguration('secureCoding').get('aiProvider', 'ollama'),
+        cloud_api_base: vscode.workspace.getConfiguration('secureCoding').get('cloudApiBase', 'https://api.openai.com/v1'),
     };
     const response = await fetch(`${backendUrl}/suggest-fix`, {
         method: 'POST',
@@ -435,6 +500,27 @@ async function fixAllFile(document, diagnosticCollection, findingsByUri, rescan)
     }
     else {
         vscode.window.showErrorMessage('Failed to apply fixes');
+    }
+}
+// FR-04: Apply a single rule-based template fix to one diagnostic (no AI round-trip)
+async function applyTemplateFix(document, diagnostic, diagnosticCollection) {
+    const ruleId = String(diagnostic.code || '');
+    const template = templateFix(document.languageId, diagnostic.message, ruleId);
+    if (!template) {
+        vscode.window.showInformationMessage(`No rule-based fix available for ${ruleId}.`);
+        return;
+    }
+    const edit = new vscode.WorkspaceEdit();
+    edit.replace(document.uri, diagnostic.range, template);
+    const applied = await vscode.workspace.applyEdit(edit);
+    if (applied) {
+        const fileName = document.uri.path.split(/[\\/]/).pop() || document.uri.toString();
+        vscode.window.showInformationMessage(`Rule-based fix applied to ${fileName}`);
+        // Re-scan after fix to clear resolved diagnostics
+        void vscode.commands.executeCommand('secureCoding.scanCurrentFile');
+    }
+    else {
+        vscode.window.showErrorMessage('Failed to apply rule-based fix');
     }
 }
 function deactivate() { }

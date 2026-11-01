@@ -63,15 +63,29 @@
           "default": "ollama",
           "description": "API key for AI model"
         },
+        "secureCoding.aiProvider": {
+          "type": "string",
+          "enum": ["ollama", "cloud"],
+          "default": "ollama",
+          "description": "AI provider: local Ollama (private) or cloud API"
+        },
+        "secureCoding.cloudApiBase": {
+          "type": "string",
+          "default": "https://api.openai.com/v1",
+          "description": "Cloud AI API base URL (OpenAI, Anthropic, or compatible)"
+        },
         "secureCoding.aiModel": {
           "type": "string",
-          "enum": ["qwen2.5-coder:1.5b-instruct", "codellama:7b-instruct"],
+          "enum": ["qwen2.5-coder:1.5b-instruct", "codellama:7b-instruct", "gpt-4o-mini", "gpt-3.5-turbo", "claude-3-haiku-20240307"],
           "enumDescriptions": [
-            "Small, fast model — good for CPU-only machines (~1 GB)",
-            "Larger, more capable model — needs more RAM (~4 GB)"
+            "Small, fast local model (~1 GB) — recommended default",
+            "Larger local model (~4 GB) — needs more RAM",
+            "OpenAI GPT-4o Mini (cloud)",
+            "OpenAI GPT-3.5 Turbo (cloud)",
+            "Anthropic Claude 3 Haiku (cloud)"
           ],
           "default": "qwen2.5-coder:1.5b-instruct",
-          "description": "Local Ollama model for AI suggestions"
+          "description": "AI model for suggestions"
         }
       }
     }
