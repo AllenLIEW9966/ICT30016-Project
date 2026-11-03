@@ -177,7 +177,8 @@ export function activate(context: vscode.ExtensionContext) {
           }
           const ruleId = String(d.code || '');
           // Rule-based instant fix (no AI round-trip)
-          const template = templateFix(document.languageId, d.message, ruleId);
+          const codeSnippet = document.getText(d.range);
+          const template = templateFix(document.languageId, d.message, ruleId, codeSnippet);
           if (template) {
             const a = new vscode.CodeAction(
               `⚡ Quick Fix: ${ruleId}`,
@@ -329,8 +330,20 @@ export function activate(context: vscode.ExtensionContext) {
 
           // Show diff preview
           const original = document.getText(findingRange);
-          const edit = new vscode.WorkspaceEdit();
-          edit.replace(document.uri, findingRange, suggestion.secure_code);
+        const edit = new vscode.WorkspaceEdit();
+        const explanation = suggestion.explanation || 'Security fix applied';
+        const secureCode = suggestion.secure_code.trim();
+        let replacement: string;
+        if (document.languageId === 'python') {
+          replacement = `# ${explanation}
+${secureCode}`;
+        } else if (document.languageId === 'javascript') {
+          replacement = `// ${explanation}
+${secureCode}`;
+        } else {
+          replacement = secureCode;
+        }
+        edit.replace(document.uri, findingRange, replacement);
 
           const confirmed = await vscode.window.showInformationMessage(
             'AI suggests the following fix. Apply it?',
@@ -586,17 +599,39 @@ async function fixAllFile(
   findingsByUri: Map<vscode.Uri, Finding[]>,
   rescan: () => void | Promise<void>,
 ): Promise<void> {
-  const diagnostics = diagnosticCollection.get(document.uri) || [];
+  const findings = findingsByUri.get(document.uri) || [];
+
+  // Check if 'import os' already exists in the file
+  const source = document.getText();
+  const hasImportOs = /\bimport\s+os\b/.test(source);
 
   const edits: { range: vscode.Range; newText: string }[] = [];
 
-  for (const d of diagnostics) {
-    if (d.source !== 'Secure Coding') continue;
-    const ruleId = String(d.code || '');
-    const template = templateFix(document.languageId, d.message, ruleId);
+  for (const d of findings) {
+    const ruleId = String(d.rule_id || '');
+    const template = templateFix(document.languageId, d.message, ruleId, d.code_snippet);
     if (template) {
-      edits.push({ range: d.range, newText: template });
+      const range = new vscode.Range(
+        new vscode.Position(d.line - 1, d.column),
+        new vscode.Position(d.end_line - 1, d.end_column),
+      );
+      edits.push({ range, newText: template });
     }
+  }
+
+  // Add 'import os' at the top if it's not already present
+  if (!hasImportOs && edits.length > 0) {
+    const importOsEdit = new vscode.WorkspaceEdit();
+    const importOsRange = new vscode.Range(
+      new vscode.Position(0, 0),
+      new vscode.Position(0, 0),
+    );
+    importOsEdit.replace(document.uri, importOsRange, 'import os\n');
+    await vscode.workspace.applyEdit(importOsEdit);
+
+    // Re-scan to refresh diagnostics after adding import
+    await rescan();
+    return;
   }
 
   if (edits.length === 0) {
@@ -605,7 +640,6 @@ async function fixAllFile(
   }
 
   // Sort by start line descending so replacements don't invalidate earlier ranges
-  edits.sort((a, b) => b.range.start.line - a.range.start.line || b.range.start.character - a.range.start.character);
 
   const edit = new vscode.WorkspaceEdit();
   for (const e of edits) {
@@ -631,7 +665,8 @@ async function applyTemplateFix(
   diagnosticCollection: vscode.DiagnosticCollection,
 ): Promise<void> {
   const ruleId = String(diagnostic.code || '');
-  const template = templateFix(document.languageId, diagnostic.message, ruleId);
+  const codeSnippet = document.getText(diagnostic.range);
+  const template = templateFix(document.languageId, diagnostic.message, ruleId, codeSnippet);
   if (!template) {
     vscode.window.showInformationMessage(
       `No rule-based fix available for ${ruleId}.`,
@@ -655,13 +690,14 @@ async function applyTemplateFix(
 export function deactivate() {}
 
 // FR-04 helpers: instant rule-based templates + shared AI-apply flow
-function templateFix(languageId: string, message: string, ruleId: string): string | null {
+function templateFix(languageId: string, message: string, ruleId: string, codeSnippet: string): string | null {
   const lang = languageId === 'js' ? 'javascript' : languageId;
   if (lang === 'python' && ruleId === 'PY-SQLI-001') {
     return 'cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))';
   }
   if (lang === 'python' && ruleId === 'PY-SECRETS-001') {
-    return 'import os\nPASSWORD = os.environ["DB_PASSWORD"]';
+    const varName = codeSnippet.split('=').map(s => s.trim()).filter(Boolean)[0];
+    return `${varName} = os.environ["DB_PASSWORD"]`;
   }
   if (lang === 'javascript' && ruleId === 'JS-SQLI-001') {
     return "db.query('SELECT * FROM users WHERE id = ?', [userId])";
@@ -711,7 +747,17 @@ async function applyAiFix(
           return;
         }
         const edit = new vscode.WorkspaceEdit();
-        edit.replace(document.uri, range, suggestion.secure_code);
+        const explanation = suggestion.explanation || 'Security fix applied';
+        const secureCode = suggestion.secure_code.trim();
+        let replacement: string;
+        if (document.languageId === 'python') {
+          replacement = `# ${explanation}\n${secureCode}`;
+        } else if (document.languageId === 'javascript') {
+          replacement = `// ${explanation}\n${secureCode}`;
+        } else {
+          replacement = secureCode;
+        }
+        edit.replace(document.uri, range, replacement);
         const confirmed = await vscode.window.showInformationMessage(
           'AI suggests the following fix. Apply it?',
           { modal: true },
