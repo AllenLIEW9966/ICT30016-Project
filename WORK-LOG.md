@@ -64,6 +64,27 @@
 
 ---
 
+## Phase 4: Cloud AI & Deployment Expansion
+
+**Duration:** Week 3-4  
+**Goal:** Upgrade from single-model Ollama to two-model + cloud provider options, repackage VSIX, and update documentation.
+
+| Date | Task | Status | Notes |
+|------|------|--------|-------|
+| 2026-09-01 | Change default AI model from codellama:7b-instruct to qwen2.5-coder:1.5b-instruct | ⚠️ Concern | Model migration from 4GB to 1GB; smaller/faster but may have lower capability |
+| 2026-09-01 | Migrate JS scanner from regex to AST (Babel) | ✅ On Track | More accurate parsing; handles nested/complex JS structures |
+| 2026-09-01 | Package VSIX with backend (codeshield-backend.exe) | ✅ On Track | Extension now bundles backend; users don't need terminal setup |
+| 2026-09-01 | Verify semantic false-positive fix (O-05) | ✅ On Track | Uses os.environ for secrets; backend tests 26/26 passing |
+| 2026-09-01 | Add cloud AI provider option (OpenAI/Anthropic) | ✅ On Track | aiProvider=cloud + API key; Ollama remains default local provider |
+| 2026-09-01 | Build new structured installLocalAI flow (Local/Ollama/Cloud) | ✅ On Track | UI offers model pickers + provider selection |
+| 2026-09-01 | Compile TS (	sc --noEmit clean) | ✅ Done | All type checks pass |
+| 2026-09-01 | Repackage secure-coding-assistant-0.1.0.vsix | ✅ Done | Contains new installLocalAI + provider pickers |
+| 2026-09-01 | Update PRIVACY-REPORT.md (Tier-2 model, cloud AI) | ✅ Done | Ollama default, optional cloud AI documented |
+| 2026-09-01 | Update WORK-LOG.md with Phase 4 status | ✅ Done | On Track / Concern / Delayed entries added |
+| 2026-09-01 | Market publishing via VSCE/Azure DevOps | ⚠️ Concern | Publisher name from user; requires PAT/Azure DevOps setup |
+
+---
+
 ## Phase 4: VSCode Extension Development
 
 **Duration:** Week 2–3  
