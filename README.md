@@ -1,6 +1,6 @@
 # Secure Coding Assistant
 
-A VSCode extension + FastAPI backend that scans Python and JavaScript for common security issues while you type, then suggests fixes using a local AI model.
+A VS Code extension + FastAPI backend that statically scans Python and JavaScript for common security issues while you type, then suggests fixes using local or cloud AI. It keeps a bounded local workspace context cache to improve requested AI fixes; context collection does not create findings.
 
 ## What it does
 
@@ -9,6 +9,7 @@ A VSCode extension + FastAPI backend that scans Python and JavaScript for common
 - Shows OWASP/CWE info on hover
 - Suggests secure alternatives
 - Can use AI to generate a fix
+- Keeps relevant workspace source and configuration in a local context cache for AI fixes
 
 ## Setup
 
@@ -28,6 +29,8 @@ uvicorn app.main:app --reload --port 8000
 ollama pull codellama:7b-instruct
 ollama serve
 ```
+
+The extension defaults to local Ollama. Use **Secure Coding: Configure AI Provider** to select Ollama, Groq Free Tier, Gemini Free Tier, OpenRouter Free Models, or a custom OpenAI-compatible endpoint. The prepared cloud choices use free-tier models and require your own API key. Keys are stored in VS Code SecretStorage. Static scanning and workspace context collection run locally. For a cloud AI fix, selected-file context goes to the provider; related workspace files are included only after a separate prompt. Free quotas and model availability can change. The custom endpoint may incur charges, and Google may use free-tier API content to improve its products.
 
 ### VSCode Extension
 

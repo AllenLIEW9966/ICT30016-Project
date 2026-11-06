@@ -7,17 +7,19 @@ Language-aware: only returns a template when the language matches.
 """
 from __future__ import annotations
 
+import ast
+import json
+import re
+import shlex
+
 _TEMPLATES: dict[tuple[str, str], dict] = {
     ("python", "PY-SQLI-001"): {
-        "explanation": (
-            "SQL query built with f-string/format/concat lets input alter the query. "
-            "Use a parameterized placeholder and pass values separately."
-        ),
-        "secure_code": 'cursor.execute("SELECT * FROM users WHERE id = ?", (user_id,))',
+        "explanation": "Replace interpolated SQL values with placeholders and pass the values separately.",
+        "secure_code": "",
     },
     ("python", "PY-SECRETS-001"): {
         "explanation": "Hardcoded credential in source. Load it from the environment instead.",
-        "secure_code": 'import os\nPASSWORD = os.environ["DB_PASSWORD"]',
+        "secure_code": "",
     },
     ("python", "PY-CMD-001"): {
         "explanation": "Shell string built from input allows command injection. Avoid shell=True and pass argv list.",
@@ -91,16 +93,210 @@ _TEMPLATES: dict[tuple[str, str], dict] = {
 }
 
 
-def template_fix(language: str, rule_id: str) -> dict | None:
+def _contextual_sql_fix(code_snippet: str, full_source: str, line: int) -> str | None:
+    """Build a parameterized replacement only for simple, understood f-string SQL."""
+    if not full_source:
+        return None
+    try:
+        tree = ast.parse(full_source)
+    except SyntaxError:
+        return None
+
+    target_call: ast.Call | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or not isinstance(node.func, ast.Attribute):
+            continue
+        if node.func.attr != "execute" or node.lineno != line or not node.args:
+            continue
+        segment = ast.get_source_segment(full_source, node)
+        if segment and code_snippet.strip() and segment.strip() != code_snippet.strip():
+            # Allow the diagnostic to cover only the call expression with different spacing.
+            if not segment.strip().startswith(code_snippet.strip()):
+                continue
+        target_call = node
+        break
+    if target_call is None:
+        return None
+
+    query_expr = target_call.args[0]
+    if isinstance(query_expr, ast.Name):
+        assignments = [
+            node for node in ast.walk(tree)
+            if isinstance(node, (ast.Assign, ast.AnnAssign))
+            and node.lineno < target_call.lineno
+            and any(isinstance(t, ast.Name) and t.id == query_expr.id for t in (node.targets if isinstance(node, ast.Assign) else [node.target]))
+        ]
+        if not assignments:
+            return None
+        assignment = max(assignments, key=lambda item: item.lineno)
+        query_expr = assignment.value
+    if not isinstance(query_expr, ast.JoinedStr):
+        return None
+
+    chunks: list[str | None] = []
+    params: list[str] = []
+    for part in query_expr.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            chunks.append(part.value)
+        elif isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name):
+            chunks.append(None)
+            params.append(part.value.id)
+        else:
+            return None
+    if not params:
+        return None
+
+    sql = ""
+    for index, chunk in enumerate(chunks):
+        if chunk is not None:
+            sql += chunk
+            continue
+        if sql.endswith(("'", '"')):
+            sql = sql[:-1]
+        sql += "?"
+        next_chunk = chunks[index + 1] if index + 1 < len(chunks) else None
+        if isinstance(next_chunk, str) and next_chunk.startswith(("'", '"')):
+            chunks[index + 1] = next_chunk[1:]
+    if not re.match(r"(?is)^\s*(select|insert|update|delete)\b", sql):
+        return None
+
+    function = ast.get_source_segment(full_source, target_call.func)
+    if not function:
+        return None
+    tuple_values = ", ".join(params)
+    if len(params) == 1:
+        tuple_values += ","
+    return f"{function}({sql!r}, ({tuple_values}))"
+
+
+def _contextual_command_fix(code_snippet: str, full_source: str, line: int) -> str | None:
+    """Replace a subprocess.run(shell=True) call only for a simple fixed f-string command."""
+    if not full_source:
+        return None
+    try:
+        tree = ast.parse(full_source)
+    except SyntaxError:
+        return None
+
+    target: ast.Call | None = None
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.Call) or node.lineno != line:
+            continue
+        if not isinstance(node.func, ast.Attribute) or node.func.attr != "run":
+            continue
+        if not isinstance(node.func.value, ast.Name) or node.func.value.id != "subprocess":
+            continue
+        shell_true = any(
+            keyword.arg == "shell" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+            for keyword in node.keywords
+        )
+        if shell_true and node.args and isinstance(node.args[0], ast.Name):
+            target = node
+            break
+    if target is None:
+        return None
+
+    command_name = target.args[0].id
+    assignments: list[ast.AST] = []
+    for node in ast.walk(tree):
+        if not isinstance(node, (ast.Assign, ast.AnnAssign)) or node.lineno >= target.lineno:
+            continue
+        targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+        if any(isinstance(item, ast.Name) and item.id == command_name for item in targets):
+            assignments.append(node)
+    if len(assignments) != 1:
+        return None
+    assignment = max(assignments, key=lambda item: item.lineno)
+    command_value = assignment.value
+    if not isinstance(command_value, ast.JoinedStr):
+        return None
+
+    markers: dict[str, str] = {}
+    pieces: list[str] = []
+    for part in command_value.values:
+        if isinstance(part, ast.Constant) and isinstance(part.value, str):
+            pieces.append(part.value)
+        elif isinstance(part, ast.FormattedValue) and isinstance(part.value, ast.Name) and part.format_spec is None:
+            marker = f"CODESHIELD_ARG_{len(markers)}_TOKEN"
+            markers[marker] = part.value.id
+            pieces.append(marker)
+        else:
+            return None
+    if not markers:
+        return None
+    try:
+        tokens = shlex.split("".join(pieces), posix=True)
+    except ValueError:
+        return None
+    if not tokens or any(marker in token and token != marker for token in tokens for marker in markers):
+        return None
+
+    argv = [markers.get(token, json.dumps(token)) for token in tokens]
+    original_call = ast.get_source_segment(full_source, target)
+    selected = code_snippet.strip()
+    if not original_call or selected and original_call.strip() != selected:
+        return None
+    function = ast.get_source_segment(full_source, target.func)
+    if not function:
+        return None
+    args = [f"[{', '.join(argv)}]"]
+    for argument in target.args[1:]:
+        segment = ast.get_source_segment(full_source, argument)
+        if not segment:
+            return None
+        args.append(segment)
+    shell_keyword_seen = False
+    for keyword in target.keywords:
+        if keyword.arg == "shell":
+            args.append("shell=False")
+            shell_keyword_seen = True
+            continue
+        segment = ast.get_source_segment(full_source, keyword.value)
+        if not segment:
+            return None
+        args.append(f"{keyword.arg}={segment}" if keyword.arg else f"**{segment}")
+    if not shell_keyword_seen:
+        return None
+    return f"{function}({', '.join(args)})"
+
+
+def template_fix(
+    language: str,
+    rule_id: str,
+    *,
+    code_snippet: str = "",
+    full_source: str = "",
+    line: int = 1,
+) -> dict | None:
     key = ((language or "").lower(), (rule_id or "").upper())
     # normalise 'js' -> 'javascript'
     if key[0] == "js":
         key = ("javascript", key[1])
+    # Only context-aware, single-range templates are safe to offer automatically.
+    if key not in {("python", "PY-SQLI-001"), ("python", "PY-SECRETS-001"), ("python", "PY-CMD-001")}:
+        return None
     tpl = _TEMPLATES.get(key)
     if tpl is None:
         return None
+    secure_code = tpl["secure_code"]
+    if key == ("python", "PY-SQLI-001"):
+        secure_code = _contextual_sql_fix(code_snippet, full_source, line) or ""
+        if not secure_code:
+            return None
+    elif key == ("python", "PY-SECRETS-001"):
+        if not re.search(r"\bimport\s+os\b|\bfrom\s+os\s+import\s+environ\b", full_source):
+            return None
+        match = re.match(r"\s*([A-Za-z_]\w*)\s*=", code_snippet)
+        if not match:
+            return None
+        variable = match.group(1)
+        secure_code = f'{variable} = os.environ["{variable}"]'
+    elif key == ("python", "PY-CMD-001"):
+        secure_code = _contextual_command_fix(code_snippet, full_source, line) or ""
+    if not secure_code:
+        return None
     return {
-        "explanation": tpl["explanation"] + " (rule-based fallback, LLM unavailable)",
-        "secure_code": tpl["secure_code"],
+        "explanation": tpl["explanation"] + " (context-checked rule-based fallback)",
+        "secure_code": secure_code,
         "references": [],
     }

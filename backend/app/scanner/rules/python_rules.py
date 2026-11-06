@@ -12,50 +12,96 @@ def _rule(**kwargs):
 # A03:2021 Injection — SQL string concatenation via cursor.execute with f-string / format / + concat
 # O-03 extension: also flag tainted Name (variable holding dynamic query) so
 # q = "..." + u; cursor.execute(q) is caught, not just inline concat.
-_TAINTED_NAMES: set[str] = set()
+def _assigned_names(target: ast.AST) -> set[str]:
+    if isinstance(target, ast.Name):
+        return {target.id}
+    if isinstance(target, (ast.Tuple, ast.List)):
+        return set().union(*(_assigned_names(item) for item in target.elts))
+    return set()
+
+
+def _expression_is_dynamic(expr: ast.AST, tainted: set[str]) -> bool:
+    if isinstance(expr, ast.JoinedStr):
+        return any(isinstance(part, ast.FormattedValue) for part in expr.values)
+    if isinstance(expr, ast.Name):
+        return expr.id in tainted
+    if isinstance(expr, ast.BinOp):
+        return _expression_is_dynamic(expr.left, tainted) or _expression_is_dynamic(expr.right, tainted)
+    if isinstance(expr, ast.Call):
+        if isinstance(expr.func, ast.Name) and expr.func.id in {"input", "getenv", "getattr"}:
+            return True
+        if isinstance(expr.func, ast.Attribute) and expr.func.attr == "get":
+            return True
+        if isinstance(expr.func, ast.Attribute) and expr.func.attr in {"format", "format_map"}:
+            return True
+        return any(_expression_is_dynamic(arg, tainted) for arg in expr.args)
+    return False
 
 
 def _mark_tainted(tree: ast.AST) -> set[str]:
-    out: set[str] = set()
+    """Track variables assigned dynamically, including simple alias chains."""
+    assignments: list[tuple[set[str], ast.AST]] = []
     for node in ast.walk(tree):
-        if isinstance(node, ast.Assign) and len(node.targets) == 1:
-            t = node.targets[0]
-            v = node.value
-            dyn = isinstance(v, (ast.JoinedStr, ast.BinOp))
-            if not dyn and isinstance(v, ast.Call) and isinstance(v.func, ast.Attribute):
-                dyn = v.func.attr == "format"
-            if dyn and isinstance(t, ast.Name):
-                out.add(t.id)
-    return out
+        if isinstance(node, ast.Assign):
+            targets = set().union(*(_assigned_names(t) for t in node.targets))
+            assignments.append((targets, node.value))
+        elif isinstance(node, ast.AnnAssign):
+            assignments.append((_assigned_names(node.target), node.value or ast.Constant(None)))
+    tainted: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.Lambda)):
+            args = list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+            tainted.update(arg.arg for arg in args)
+    changed = True
+    while changed:
+        changed = False
+        for names, value in assignments:
+            if names and _expression_is_dynamic(value, tainted):
+                before = len(tainted)
+                tainted.update(names)
+                changed |= len(tainted) != before
+    return tainted
 
 
-def _sql_injection_fstring(node: ast.Call) -> bool:
-    if not isinstance(node.func, ast.Attribute) or node.func.attr != "execute":
+def _sql_injection_fstring(node: ast.Call, tainted_names: set[str]) -> bool:
+    if not isinstance(node.func, ast.Attribute) or node.func.attr not in {"execute", "executemany", "executescript"}:
         return False
     if not node.args:
         return False
     arg = node.args[0]
     if isinstance(arg, ast.JoinedStr):
-        return True
-    if isinstance(arg, ast.BinOp) and isinstance(arg.op, ast.Add):
-        return True
-    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr == "format":
-        return True
-    if isinstance(arg, ast.Name) and arg.id in _TAINTED_NAMES:
+        return any(isinstance(part, ast.FormattedValue) for part in arg.values)
+    if isinstance(arg, ast.BinOp) and isinstance(arg.op, (ast.Add, ast.Mod)):
+        return _expression_is_dynamic(arg, tainted_names)
+    if isinstance(arg, ast.Call) and isinstance(arg.func, ast.Attribute) and arg.func.attr in {"format", "format_map"}:
+        return bool(arg.args) or bool(arg.keywords)
+    if isinstance(arg, ast.Name) and arg.id in tainted_names:
         return True
     return False
 
 
 # A03:2021 Injection — os.system / subprocess with string concat
-def _cmd_injection(node: ast.Call) -> bool:
+def _cmd_injection(node: ast.Call, tainted_names: set[str]) -> bool:
     if not isinstance(node.func, ast.Attribute):
         return False
-    if node.func.attr not in {"system", "popen", "call", "run"}:
+    if node.func.attr not in {"system", "popen", "call", "run", "Popen", "check_call", "check_output"}:
         return False
     if not node.args:
         return False
     arg = node.args[0]
-    return isinstance(arg, (ast.JoinedStr, ast.BinOp))
+    is_command_api = (
+        isinstance(node.func.value, ast.Name) and node.func.value.id in {"os", "subprocess"}
+    )
+    if not is_command_api:
+        return False
+    dynamic = _expression_is_dynamic(arg, tainted_names) or (
+        isinstance(arg, ast.Name) and arg.id in tainted_names
+    )
+    shell_true = any(
+        keyword.arg == "shell" and isinstance(keyword.value, ast.Constant) and keyword.value.value is True
+        for keyword in node.keywords
+    )
+    return dynamic and (shell_true or node.func.value.id == "os")
 
 
 # A02:2021 Cryptographic Failures — MD5 / SHA1 usage
@@ -77,9 +123,9 @@ def _sha1_usage(node: ast.Call) -> bool:
 
 # A05:2021 Security Misconfiguration — debug=True
 def _debug_true(node: ast.Assign) -> bool:
-    return any(
-        isinstance(t, ast.Name) and t.id == "DEBUG" for t in node.targets
-    ) and isinstance(node.value, ast.Constant) and node.value.value is True
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    return any(isinstance(t, ast.Name) and t.id == "DEBUG" for t in targets) \
+        and isinstance(node.value, ast.Constant) and node.value.value is True
 
 
 # A03:2021 — eval() usage
@@ -95,8 +141,15 @@ def _eval_usage(node: ast.Expr) -> bool:
 _SECRET_KEYWORDS = {"PASSWORD", "SECRET", "API_KEY", "TOKEN", "CREDENTIAL"}
 
 
-def _hardcoded_secret(node: ast.Assign) -> bool:
-    for target in node.targets:
+def _hardcoded_secret(node: ast.Assign | ast.AnnAssign) -> bool:
+    # Secret-like variable names are not sufficient evidence by themselves:
+    # assignments from os.environ/secrets managers are expected secure patterns.
+    if not isinstance(node.value, ast.Constant) or not isinstance(node.value.value, str):
+        return False
+    if not node.value.value.strip():
+        return False
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    for target in targets:
         if isinstance(target, ast.Name):
             if any(kw in target.id.upper() for kw in _SECRET_KEYWORDS):
                 return True
@@ -115,14 +168,17 @@ def _exec_usage(node: ast.Expr) -> bool:
 # A08:2021 — pickle.loads / yaml.load unsafe deserialization
 def _unsafe_deserialize(node: ast.Call) -> bool:
     if isinstance(node.func, ast.Attribute) and node.func.attr in {"loads", "load"}:
-        return True
-    if isinstance(node.func, ast.Call) and getattr(node.func.func, "id", None) in {"loads", "load"}:
-        return True
+        module = node.func.value
+        if isinstance(module, ast.Name) and module.id in {"pickle", "marshal", "yaml"}:
+            return True
+        # yaml.load can be imported as a direct function.
+        if isinstance(module, ast.Name) and module.id in {"load", "loads"}:
+            return True
     return False
 
 
 # A01:2021 — open() with user-controlled path
-def _open_user_path(node: ast.Call) -> bool:
+def _open_user_path(node: ast.Call, tainted_names: set[str] | None = None) -> bool:
     if not isinstance(node.func, ast.Name) or node.func.id != "open":
         return False
     if not node.args:
@@ -132,15 +188,14 @@ def _open_user_path(node: ast.Call) -> bool:
         return True
     if isinstance(first, ast.BinOp) and isinstance(first.op, ast.Add):
         return True
+    if isinstance(first, ast.Name) and first.id in (tainted_names or set()):
+        return True
     return False
 
 
 # A10:2021 — requests.get/post with user-controlled URL
 # O-03 extension: bare Name is user-controlled unless plainly CONSTANT
 # (constant URLs like "https://api.example.com" must NOT fire).
-_URL_CONSTANTS: set[str] = set()
-
-
 def _mark_url_constants(tree: ast.AST) -> set[str]:
     out: set[str] = set()
     for node in ast.walk(tree):
@@ -151,10 +206,14 @@ def _mark_url_constants(tree: ast.AST) -> set[str]:
     return out
 
 
-def _ssrf_requests(node: ast.Call) -> bool:
+def _ssrf_requests(node: ast.Call, url_constants: set[str]) -> bool:
     if not isinstance(node.func, ast.Attribute):
         return False
     if node.func.attr not in {"get", "post", "put", "delete", "head"}:
+        return False
+    if not isinstance(node.func.value, ast.Name) or node.func.value.id not in {
+        "requests", "httpx", "aiohttp", "urllib", "urlopen", "session", "client"
+    }:
         return False
     if not node.args:
         return False
@@ -163,7 +222,7 @@ def _ssrf_requests(node: ast.Call) -> bool:
         return True
     if isinstance(first, ast.Call) and isinstance(first.func, ast.Attribute):
         return first.func.attr == "format"
-    if isinstance(first, ast.Name) and first.id not in _URL_CONSTANTS:
+    if isinstance(first, ast.Name) and first.id not in url_constants:
         return True
     return False
 
@@ -268,7 +327,7 @@ _rule(
     confidence="medium",
     cwe_id="CWE-798",
     owasp_ref="A04:2021-Insecure-Design",
-    message="Assignment name suggests a secret. Use environment variables or secret managers.",
+    message="CodeShield detected a possible hard-coded secret. Move the value to an environment variable or secret manager.",
     suggestion="Load from os.environ or a secrets manager: os.environ['DB_PASSWORD']",
     checker="assign",
     matches=_hardcoded_secret,

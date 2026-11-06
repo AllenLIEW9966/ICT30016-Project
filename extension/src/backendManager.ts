@@ -5,6 +5,7 @@ import * as path from 'path';
 
 /** A1: backend lifecycle manager — bundled exe first, dev server fallback. */
 export class BackendManager {
+  private readonly expectedBackendVersion = '0.1.15';
   private proc: cp.ChildProcess | null = null;
   private out: vscode.OutputChannel;
   private url: string;
@@ -54,22 +55,37 @@ export class BackendManager {
     return null;
   }
 
-  async isUp(): Promise<boolean> {
+  private async healthState(): Promise<'current' | 'stale' | 'offline'> {
     try {
       const ctl = new AbortController();
       const t = setTimeout(() => ctl.abort(), 1500);
       const r = await fetch(`${this.url}/health`, { signal: ctl.signal });
       clearTimeout(t);
-      return r.ok;
+      if (!r.ok) return 'offline';
+      const body = await r.json() as { version?: string };
+      return body.version === this.expectedBackendVersion ? 'current' : 'stale';
     } catch {
-      return false;
+      return 'offline';
     }
   }
 
+  async isUp(): Promise<boolean> {
+    return (await this.healthState()) === 'current';
+  }
+
   async ensureRunning(ctx: vscode.ExtensionContext, status: vscode.StatusBarItem): Promise<boolean> {
-    if (await this.isUp()) {
+    const initialHealth = await this.healthState();
+    if (initialHealth === 'current') {
       await this.checkOllama();
       return true;
+    }
+    if (initialHealth === 'stale') {
+      status.text = '$(alert) CodeShield: restart required';
+      this.out.appendLine('[backend] an older or incompatible backend is already responding on the configured port.');
+      vscode.window.showErrorMessage(
+        'An older CodeShield backend is still running. Close all VS Code windows and end any remaining codeshield-backend process, then reopen VS Code.',
+      );
+      return false;
     }
     status.text = '$(sync~spin) CodeShield: starting…';
     const exe = this.bundledExe(ctx);
@@ -113,10 +129,19 @@ export class BackendManager {
     });
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 1000));
-      if (await this.isUp()) {
+      const health = await this.healthState();
+      if (health === 'current') {
         this.out.appendLine('[backend] ready');
         await this.checkOllama();
         return true;
+      }
+      if (health === 'stale') {
+        this.proc?.kill();
+        status.text = '$(alert) CodeShield: restart required';
+        vscode.window.showErrorMessage(
+          'An older CodeShield backend is still responding on the configured port. Stop it and restart VS Code before scanning or fixing code.',
+        );
+        return false;
       }
       if (this.proc === null) {
         break;
@@ -151,6 +176,58 @@ export class BackendManager {
     this.out.appendLine(
       `[ollama] ready=${this.ollamaReady} model=${this.ollamaModelAvailable}`,
     );
+  }
+
+  async listOllamaModels(): Promise<string[]> {
+    try {
+      const ctl = new AbortController();
+      const timeout = setTimeout(() => ctl.abort(), 2000);
+      try {
+        const response = await fetch(`${this.ollamaUrl}/api/tags`, { signal: ctl.signal });
+        if (!response.ok) return [];
+        const data = await response.json() as { models?: { name?: string }[] };
+        return [...new Set((data.models || []).map((model) => model.name?.trim()).filter((name): name is string => Boolean(name)))];
+      } finally {
+        clearTimeout(timeout);
+      }
+    } catch {
+      return [];
+    }
+  }
+
+  async waitForOllamaModel(model: string, onStatus: (available: boolean) => void): Promise<boolean> {
+    const deadline = Date.now() + 20 * 60 * 1000;
+    const normalizedModel = model.trim().toLowerCase();
+    while (Date.now() < deadline) {
+      try {
+        const ctl = new AbortController();
+        const timeout = setTimeout(() => ctl.abort(), 2000);
+        const response = await fetch(`${this.ollamaUrl}/api/tags`, { signal: ctl.signal });
+        clearTimeout(timeout);
+        this.ollamaReady = response.ok;
+        if (response.ok) {
+          const data = await response.json() as { models?: { name?: string }[] };
+          this.ollamaModelAvailable = data.models?.some((item) => {
+            const name = item.name?.toLowerCase() || '';
+            return name === normalizedModel || name.startsWith(`${normalizedModel}:`);
+          }) ?? false;
+          if (this.ollamaModelAvailable) {
+            onStatus(true);
+            this.out.appendLine(`[ollama] model pull completed: ${model}`);
+            return true;
+          }
+        } else {
+          this.ollamaModelAvailable = false;
+        }
+      } catch {
+        this.ollamaReady = false;
+        this.ollamaModelAvailable = false;
+      }
+      await new Promise((resolve) => setTimeout(resolve, 2000));
+    }
+    onStatus(false);
+    this.out.appendLine(`[ollama] timed out waiting for model: ${model}`);
+    return false;
   }
 
   isOllamaReady(): boolean {

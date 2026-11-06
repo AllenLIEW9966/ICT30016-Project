@@ -1,6 +1,8 @@
 node_modules/
 dist/
 *.log
+compile-out.txt
+src/**/*.bak
 .DS_Store
 .vscode-test/
 
