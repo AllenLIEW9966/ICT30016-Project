@@ -16,9 +16,13 @@ class SuggestionRequest(BaseModel):
 
 
 class SuggestionResponse(BaseModel):
+    can_fix: bool = True
     explanation: str
     secure_code: str
     references: list[str] = []
+    source: str = "provider"
+    provider: str = "ollama"
+    warning: str | None = None
 
 
 @router.post("/suggest-fix", response_model=SuggestionResponse)

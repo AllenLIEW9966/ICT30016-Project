@@ -75,6 +75,68 @@ def _is_placeholder(value: str) -> bool:
     return v in {"", "xxx", "todo", "changeme", "example", "test", "***", "none", "null"}
 
 
+def _enclosing_function(node: ast.AST, tree: ast.AST) -> ast.AST | None:
+    candidates = [
+        item for item in ast.walk(tree)
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and item.lineno <= getattr(node, "lineno", 0)
+        and getattr(item, "end_lineno", item.lineno) >= getattr(node, "end_lineno", getattr(node, "lineno", 0))
+    ]
+    return min(candidates, key=lambda item: getattr(item, "end_lineno", item.lineno) - item.lineno) if candidates else None
+
+
+def _raises_in_body(node: ast.If) -> bool:
+    return any(isinstance(item, ast.Raise) for statement in node.body for item in ast.walk(statement))
+
+
+def _has_path_containment_guard(node: ast.Call, tree: ast.AST) -> bool:
+    function = _enclosing_function(node, tree)
+    if function is None or not node.args or not isinstance(node.args[0], ast.Name):
+        return False
+    path_name = node.args[0].id
+    for item in ast.walk(function):
+        if not isinstance(item, ast.If) or not _raises_in_body(item):
+            continue
+        test_calls_commonpath = any(
+            isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr == "commonpath"
+            and any(isinstance(part, ast.Name) and part.id == path_name for arg in child.args for part in ast.walk(arg))
+            for child in ast.walk(item.test)
+        )
+        if test_calls_commonpath:
+            return True
+    return False
+
+
+def _has_ssrf_allowlist_guard(node: ast.Call, tree: ast.AST) -> bool:
+    function = _enclosing_function(node, tree)
+    if function is None or not node.args or not isinstance(node.args[0], ast.Name):
+        return False
+    request_url = node.args[0].id
+    parsed_names = {
+        target.id
+        for assignment in ast.walk(function)
+        if isinstance(assignment, ast.Assign) and isinstance(assignment.value, ast.Call)
+        and isinstance(assignment.value.func, ast.Name) and assignment.value.func.id == "urlparse"
+        and assignment.value.args and isinstance(assignment.value.args[0], ast.Name)
+        and assignment.value.args[0].id == request_url
+        for target in assignment.targets if isinstance(target, ast.Name)
+    }
+    if not parsed_names:
+        return False
+    for item in ast.walk(function):
+        if not isinstance(item, ast.If) or not _raises_in_body(item):
+            continue
+        checked_url_attributes = {
+            child.attr for child in ast.walk(item.test)
+            if isinstance(child, ast.Attribute) and isinstance(child.value, ast.Name)
+            and child.value.id in parsed_names
+        }
+        names = {child.id for child in ast.walk(item.test) if isinstance(child, ast.Name)}
+        if {"scheme", "hostname"}.issubset(checked_url_attributes) and "allowed_hosts" in names:
+            return True
+    return False
+
+
 def validate_finding(rule_id: str, node: ast.AST, tree: ast.AST) -> tuple[bool, str]:
     """Return (keep, reason). keep=False means suppress as false positive."""
     try:
@@ -84,6 +146,10 @@ def validate_finding(rule_id: str, node: ast.AST, tree: ast.AST) -> tuple[bool, 
 
     # --- SQLi / CMD / PATH / SSRF: need dynamic input, not constants ---
     if rule_id in {"PY-SQLI-001", "PY-CMD-001", "PY-PATH-001", "PY-SSRF-001"}:
+        if rule_id == "PY-PATH-001" and isinstance(node, ast.Call) and _has_path_containment_guard(node, tree):
+            return False, "resolved-path-contained"
+        if rule_id == "PY-SSRF-001" and isinstance(node, ast.Call) and _has_ssrf_allowlist_guard(node, tree):
+            return False, "https-host-allowlist-guard"
         if isinstance(node, ast.Call) and node.args:
             origin = _origin_of(node.args[0], assignments)
             if origin == "CONSTANT":
