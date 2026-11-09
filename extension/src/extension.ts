@@ -1,6 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
-import { BackendManager } from './backendManager';
+import { BackendManager, normalizeBackendUrl } from './backendManager';
 
 type Finding = {
   rule_id: string;
@@ -40,7 +40,9 @@ function secretKeyFor(provider: string): string {
 export function activate(context: vscode.ExtensionContext) {
   console.log('Secure Coding Assistant is now active');
 
-  const backendUrl = vscode.workspace.getConfiguration('secureCoding').get<string>('backendUrl', 'http://localhost:8000');
+  const backendUrl = normalizeBackendUrl(
+    vscode.workspace.getConfiguration('secureCoding').get<string>('backendUrl', 'http://127.0.0.1:8000'),
+  );
   const ollamaUrl = vscode.workspace.getConfiguration('secureCoding').get<string>('aiApiBase', 'http://localhost:11434/v1').replace('/v1', '');
   const backend = new BackendManager(backendUrl, ollamaUrl);
   let backendReady = false;
@@ -50,14 +52,16 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(diagnosticCollection);
 
   // Keep finding metadata keyed by document URI so hover/fix can access OWASP/CWE/suggestion
-  const findingsByUri = new Map<vscode.Uri, Finding[]>();
+  const findingsByUri = new Map<string, Finding[]>();
   const findingVersionsByUri = new Map<string, number>();
+  const workspaceScanOutput = vscode.window.createOutputChannel('CodeShield Workspace Scan');
+  context.subscriptions.push(workspaceScanOutput);
 
   let statusBarItem: vscode.StatusBarItem | undefined;
   statusBarItem = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
   statusBarItem.command = 'secureCoding.showSecurityScore';
-  statusBarItem.tooltip = 'Security Score';
-  statusBarItem.text = '🔒 ?';
+  statusBarItem.tooltip = 'CodeShield findings for the active file';
+  statusBarItem.text = '$(shield) File: —';
   statusBarItem.show();
   context.subscriptions.push(statusBarItem);
 
@@ -70,7 +74,11 @@ export function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(aiStatusBarItem);
 
   const debounceTimers = new Map<string, NodeJS.Timeout>();
+  const workspaceScanTimers = new Map<string, NodeJS.Timeout>();
   const scanRequestIds = new Map<string, number>();
+  const maxWorkspaceScanFiles = 2000;
+  const maxWorkspaceScanFileBytes = 512 * 1024;
+  const workspaceScanExcludeGlob = '**/{.git,.venv,venv,node_modules,dist,build,out,coverage,__pycache__,.next,vendor,.pytest_cache,.mypy_cache}/**';
 
   const aiConfig = vscode.workspace.getConfiguration('secureCoding');
   const cloudProviders: Record<string, { label: string; models: { label: string; description: string }[] }> = {
@@ -108,7 +116,6 @@ export function activate(context: vscode.ExtensionContext) {
         { modal: true },
         'Download Model',
         'Use Quick Fix',
-        'Cancel',
       );
       if (choice === 'Download Model') {
         await vscode.commands.executeCommand('secureCoding.installLocalAI');
@@ -228,7 +235,7 @@ export function activate(context: vscode.ExtensionContext) {
   }
 
   function findingForDiagnostic(document: vscode.TextDocument, diagnostic: vscode.Diagnostic): Finding | undefined {
-    return (findingsByUri.get(document.uri) || []).find((finding) =>
+    return (findingsByUri.get(document.uri.toString()) || []).find((finding) =>
       finding.rule_id === String(diagnostic.code || '') &&
       finding.line === diagnostic.range.start.line + 1 &&
       finding.column === diagnostic.range.start.character &&
@@ -324,6 +331,146 @@ export function activate(context: vscode.ExtensionContext) {
     workspaceContextFiles.set(relative, { path: relative, uri: document.uri, document, version: document.version, content });
   }
 
+  function securityLanguageForUri(uri: vscode.Uri): 'python' | 'javascript' | undefined {
+    const extension = path.extname(uri.fsPath).toLowerCase();
+    if (extension === '.py') return 'python';
+    if (['.js', '.jsx', '.mjs', '.cjs'].includes(extension)) return 'javascript';
+    return undefined;
+  }
+
+  function isScannableWorkspaceUri(uri: vscode.Uri): boolean {
+    const root = vscode.workspace.getWorkspaceFolder(uri);
+    if (!root || !securityLanguageForUri(uri)) return false;
+    const relative = path.relative(root.uri.fsPath, uri.fsPath);
+    if (!relative || relative.startsWith('..') || path.isAbsolute(relative)) return false;
+    return !relative.split(/[\\/]/).some((part) => contextExcludedDirectories.has(part.toLowerCase()));
+  }
+
+  async function scanWorkspaceUri(uri: vscode.Uri): Promise<void> {
+    const language = securityLanguageForUri(uri);
+    if (!backendReady || !language || !isScannableWorkspaceUri(uri)) return;
+
+    // Use the editor's current buffer when it is visible or unsaved. Otherwise read
+    // from disk so context indexing cannot cause scans merely by opening documents.
+    const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === uri.toString());
+    const visible = vscode.window.visibleTextEditors.some((editor) => editor.document.uri.toString() === uri.toString());
+    if (openDocument && (visible || openDocument.isDirty)) {
+      await scanDocument(openDocument);
+      return;
+    }
+
+    const uriKey = uri.toString();
+    const requestId = (scanRequestIds.get(uriKey) || 0) + 1;
+    scanRequestIds.set(uriKey, requestId);
+    try {
+      const bytes = await vscode.workspace.fs.readFile(uri);
+      if (bytes.byteLength > maxWorkspaceScanFileBytes || bytes.includes(0)) {
+        workspaceScanOutput.appendLine(`[workspace] skipped oversized/binary file: ${uri.fsPath}`);
+        if (scanRequestIds.get(uriKey) === requestId) {
+          diagnosticCollection.delete(uri);
+          findingsByUri.delete(uriKey);
+          findingVersionsByUri.delete(uriKey);
+        }
+        return;
+      }
+      const code = new TextDecoder('utf-8').decode(bytes);
+      const response = await fetch(`${backendUrl}/scan`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ language, code, filename: uri.fsPath }),
+      });
+      if (!response.ok) throw new Error(`backend returned HTTP ${response.status}`);
+      const result = await response.json() as { findings?: Finding[] };
+      if (scanRequestIds.get(uriKey) !== requestId) return;
+
+      const currentDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === uriKey);
+      if (currentDocument && (currentDocument.isDirty || currentDocument.getText() !== code)) {
+        await scanDocument(currentDocument);
+        return;
+      }
+
+      const findings = result.findings || [];
+      const diagnostics = findings.map((finding) => {
+        const range = new vscode.Range(
+          Math.max(0, finding.line - 1), Math.max(0, finding.column),
+          Math.max(0, finding.end_line - 1), Math.max(0, finding.end_column),
+        );
+        const severity = finding.severity === 'critical' || finding.severity === 'high'
+          ? vscode.DiagnosticSeverity.Error
+          : finding.severity === 'medium'
+            ? vscode.DiagnosticSeverity.Warning
+            : vscode.DiagnosticSeverity.Information;
+        const diagnostic = new vscode.Diagnostic(range, `[${finding.severity.toUpperCase()}] ${finding.message}`, severity);
+        diagnostic.source = 'Secure Coding';
+        diagnostic.code = finding.rule_id;
+        return diagnostic;
+      });
+      diagnosticCollection.set(uri, diagnostics);
+      findingsByUri.set(uriKey, findings);
+      // -1 marks disk-indexed diagnostics. Opening the file triggers a normal buffer
+      // scan and replaces this with the document version before code actions are offered.
+      findingVersionsByUri.set(uriKey, -1);
+    } catch (error) {
+      if (scanRequestIds.get(uriKey) === requestId) {
+        workspaceScanOutput.appendLine(`[workspace] scan failed for ${uri.fsPath}: ${String(error)}`);
+      }
+    }
+  }
+
+  async function scanWorkspace(showSummary = false): Promise<void> {
+    if (!backendReady) {
+      if (showSummary) vscode.window.showWarningMessage('CodeShield backend is not ready yet. Try scanning the workspace again shortly.');
+      return;
+    }
+    const files = await vscode.workspace.findFiles(
+      '**/*.{py,js,jsx,mjs,cjs}',
+      workspaceScanExcludeGlob,
+      maxWorkspaceScanFiles + 1,
+    );
+    const limited = files.length > maxWorkspaceScanFiles;
+    const targets = files.slice(0, maxWorkspaceScanFiles);
+    let next = 0;
+    let processed = 0;
+    const worker = async () => {
+      while (next < targets.length) {
+        const uri = targets[next++];
+        await scanWorkspaceUri(uri);
+        processed++;
+      }
+    };
+    await Promise.all(Array.from({ length: Math.min(3, targets.length) }, () => worker()));
+    workspaceScanOutput.appendLine(`[workspace] processed ${processed} Python/JavaScript file(s)${limited ? `; stopped at the ${maxWorkspaceScanFiles}-file safety limit` : ''}.`);
+    if (showSummary) {
+      vscode.window.showInformationMessage(
+        `Workspace scan finished for ${processed} Python/JavaScript file(s)${limited ? ` (limit: ${maxWorkspaceScanFiles}; narrow the workspace or excluded folders for full coverage)` : ''}. Findings are shown in VS Code's Problems panel.`,
+      );
+    }
+  }
+
+  function scheduleWorkspaceScan(uri: vscode.Uri): void {
+    if (!isScannableWorkspaceUri(uri)) return;
+    const openDocument = vscode.workspace.textDocuments.find((document) => document.uri.toString() === uri.toString());
+    if (openDocument && (openDocument.isDirty || vscode.window.visibleTextEditors.some((editor) => editor.document.uri.toString() === uri.toString()))) return;
+    const key = uri.toString();
+    const existing = workspaceScanTimers.get(key);
+    if (existing) clearTimeout(existing);
+    workspaceScanTimers.set(key, setTimeout(() => {
+      workspaceScanTimers.delete(key);
+      void scanWorkspaceUri(uri);
+    }, 600));
+  }
+
+  function clearWorkspaceFindings(uri: vscode.Uri): void {
+    const key = uri.toString();
+    const timer = workspaceScanTimers.get(key);
+    if (timer) clearTimeout(timer);
+    workspaceScanTimers.delete(key);
+    scanRequestIds.set(key, (scanRequestIds.get(key) || 0) + 1);
+    diagnosticCollection.delete(uri);
+    findingsByUri.delete(key);
+    findingVersionsByUri.delete(key);
+  }
+
   function removeWorkspaceContext(uri: vscode.Uri): void {
     for (const [key, item] of workspaceContextFiles) {
       if (item.uri.toString() === uri.toString()) workspaceContextFiles.delete(key);
@@ -377,19 +524,15 @@ export function activate(context: vscode.ExtensionContext) {
   ): Promise<{ files: { path: string; content: string }[]; cancelled: boolean }> {
     const provider = aiConfig.get<string>('aiProvider', 'ollama');
     if (provider === 'ollama' || files.length === 0) return { files, cancelled: false };
-    const consentKey = `secureCoding.aiFixProjectContextConsent.${provider}`;
-    const savedConsent = context.globalState.get<boolean>(consentKey);
-    if (savedConsent !== undefined) return { files: savedConsent ? files : [], cancelled: false };
+    const fileList = files.map((file) => file.path).slice(0, 8).join(', ');
     const choice = await vscode.window.showInformationMessage(
-      `To improve this AI fix, ${files.length} related workspace file(s) may be sent with the selected code to ${provider}. The local context cache itself does not send or scan files.`,
+      `To improve this AI fix, these related workspace files may be sent with the selected code to ${provider}: ${fileList}. Common credential assignments, private-key blocks, and URL credentials are redacted automatically, but redaction is not exhaustive. The local context cache does not send or scan files.`,
       { modal: true },
       'Include Project Context',
       'Use Current File Only',
-      'Cancel',
     );
-    if (choice === 'Cancel' || !choice) return { files: [], cancelled: true };
+    if (!choice) return { files: [], cancelled: true };
     const include = choice === 'Include Project Context';
-    await context.globalState.update(consentKey, include);
     return { files: include ? files : [], cancelled: false };
   }
   async function scanDocument(document: vscode.TextDocument): Promise<void> {
@@ -418,7 +561,7 @@ export function activate(context: vscode.ExtensionContext) {
       if (!response.ok) {
         if (scanRequestIds.get(uriKey) === requestId && document.version === version) {
           diagnosticCollection.delete(document.uri);
-          findingsByUri.delete(document.uri);
+          findingsByUri.delete(uriKey);
           findingVersionsByUri.delete(uriKey);
           statusBarItem!.tooltip = `Scan failed: backend returned HTTP ${response.status}`;
         }
@@ -456,14 +599,14 @@ export function activate(context: vscode.ExtensionContext) {
 
       diagnosticCollection.set(document.uri, diagnostics);
       console.log(`[Secure Coding] set ${diagnostics.length} diagnostics for ${document.uri.toString()}`);
-      findingsByUri.set(document.uri, findings);
+      findingsByUri.set(uriKey, findings);
       findingVersionsByUri.set(uriKey, version);
       updateStatusBar(findings);
     } catch (error) {
       console.error(`[Secure Coding] Scan failed: ${error}`);
       if (scanRequestIds.get(uriKey) === requestId && document.version === version && !document.isClosed) {
         diagnosticCollection.delete(document.uri);
-        findingsByUri.delete(document.uri);
+        findingsByUri.delete(uriKey);
         findingVersionsByUri.delete(uriKey);
         statusBarItem!.tooltip = 'Scan failed. Check that the backend is running, then scan again.';
       }
@@ -476,15 +619,9 @@ export function activate(context: vscode.ExtensionContext) {
     const medium = findings.filter((f) => f.severity === 'medium').length;
     const low = findings.filter((f) => f.severity === 'low').length;
 
-    let score: string;
-    if (critical > 0) score = 'F';
-    else if (high > 2) score = 'D';
-    else if (high > 0 || medium > 2) score = 'C';
-    else if (medium > 0 || low > 2) score = 'B';
-    else score = 'A';
-
-    statusBarItem!.text = `🔒 ${score}`;
-    statusBarItem!.tooltip = `Security Score: ${score}\nCritical: ${critical}, High: ${high}, Medium: ${medium}, Low: ${low}`;
+    const total = critical + high + medium + low;
+    statusBarItem!.text = `$(shield) File: ${total}`;
+    statusBarItem!.tooltip = `CodeShield findings for the active file: ${total}\nCritical: ${critical}, High: ${high}, Medium: ${medium}, Low: ${low}\nThis rule-based scan covers selected patterns; it is not a security certification.`;
     statusBarItem!.show();
   }
 
@@ -510,17 +647,21 @@ export function activate(context: vscode.ExtensionContext) {
     const timer = debounceTimers.get(key);
     if (timer) clearTimeout(timer);
     debounceTimers.delete(key);
-    scanRequestIds.delete(key);
-    findingsByUri.delete(document.uri);
-    findingVersionsByUri.delete(key);
-    diagnosticCollection.delete(document.uri);
+    if (isScannableWorkspaceUri(document.uri)) {
+      // Keep workspace findings visible after the editor closes, and refresh them
+      // from disk in case the user saved while closing.
+      findingVersionsByUri.set(key, -1);
+      scheduleWorkspaceScan(document.uri);
+    } else {
+      scanRequestIds.delete(key);
+      findingsByUri.delete(key);
+      findingVersionsByUri.delete(key);
+      diagnosticCollection.delete(document.uri);
+    }
   });
 
   const openListener = vscode.workspace.onDidOpenTextDocument((document) => {
     updateWorkspaceContext(document);
-    if (document.languageId === 'python' || document.languageId === 'javascript') {
-      void scanDocument(document);
-    }
   });
   const activeEditorListener = vscode.window.onDidChangeActiveTextEditor((editor) => {
     if (editor && (editor.document.languageId === 'python' || editor.document.languageId === 'javascript')) {
@@ -535,6 +676,7 @@ export function activate(context: vscode.ExtensionContext) {
   });
   const workspaceFolderListener = vscode.workspace.onDidChangeWorkspaceFolders(() => {
     workspaceContextRefresh = refreshWorkspaceContext();
+    void scanWorkspace();
   });
   const contextWatcher = vscode.workspace.createFileSystemWatcher('**/*.{py,js,jsx,ts,tsx,html,css,sql,sh,ps1,java,cs,go,rs,php,rb,vue,svelte,json,toml,yaml,yml,ini,cfg,txt}');
   const contextCreateListener = contextWatcher.onDidCreate((uri) => {
@@ -544,6 +686,12 @@ export function activate(context: vscode.ExtensionContext) {
     void vscode.workspace.openTextDocument(uri).then(updateWorkspaceContext, () => undefined);
   });
   const contextDeleteListener = contextWatcher.onDidDelete((uri) => removeWorkspaceContext(uri));
+  const securityWatcher = vscode.workspace.createFileSystemWatcher(
+    '**/*.{py,js,jsx,mjs,cjs}',
+  );
+  const securityCreateListener = securityWatcher.onDidCreate(scheduleWorkspaceScan);
+  const securityChangeListener = securityWatcher.onDidChange(scheduleWorkspaceScan);
+  const securityDeleteListener = securityWatcher.onDidDelete(clearWorkspaceFindings);
 
   // Scan current file command
   const scanCommand = vscode.commands.registerCommand('secureCoding.scanCurrentFile', async () => {
@@ -554,6 +702,9 @@ export function activate(context: vscode.ExtensionContext) {
     }
     await scanDocument(editor.document);
     vscode.window.showInformationMessage('Scan complete');
+  });
+  const scanWorkspaceCommand = vscode.commands.registerCommand('secureCoding.scanWorkspace', async () => {
+    await scanWorkspace(true);
   });
   // FR-04: 1-click Quick Fix — lightbulb action on every diagnostic
   const quickFixProvider = vscode.languages.registerCodeActionsProvider(
@@ -712,14 +863,14 @@ export function activate(context: vscode.ExtensionContext) {
   const scoreCommand = vscode.commands.registerCommand('secureCoding.showSecurityScore', async () => {
     const editor = vscode.window.activeTextEditor;
     if (!editor) {
-      vscode.window.showInformationMessage('Open a file to see security score');
+      vscode.window.showInformationMessage('Open a Python or JavaScript file to see CodeShield findings.');
       return;
     }
     const diagnostics = diagnosticCollection.get(editor.document.uri) || [];
     updateStatusBar(diagnosticsToFindings(diagnostics));
-    const score = statusBarItem.text || 'N/A';
+    const score = statusBarItem.text || 'No scan yet';
     const tooltipText = typeof statusBarItem.tooltip === 'string' ? statusBarItem.tooltip : '';
-    vscode.window.showInformationMessage(`Security Score: ${score}`, { detail: tooltipText });
+    vscode.window.showInformationMessage(`Current file scan: ${score}`, { detail: tooltipText });
   });
 
   // Hover provider
@@ -732,7 +883,7 @@ export function activate(context: vscode.ExtensionContext) {
         return null;
       }
 
-      const findings = findingsByUri.get(document.uri) || [];
+      const findings = findingsByUri.get(document.uri.toString()) || [];
       const markdown = new vscode.MarkdownString();
       markdown.isTrusted = true;
       markdown.appendMarkdown('## Secure Coding Findings\n\n');
@@ -760,6 +911,7 @@ export function activate(context: vscode.ExtensionContext) {
     saveListener,
     workspaceFolderListener,
     scanCommand,
+    scanWorkspaceCommand,
     fixCommand,
     fixDiagnosticCmd,
     quickFixProvider,
@@ -794,17 +946,49 @@ export function activate(context: vscode.ExtensionContext) {
       }
 
       if (choice.provider === 'ollama') {
+        // Query Ollama each time this picker opens so newly pulled tags appear without
+        // requiring an extension update. Keep the prepared models as pullable fallbacks.
+        const installedModels = await backend.listOllamaModels();
+        const preparedModels = [
+          { model: 'qwen2.5-coder:1.5b-instruct', description: 'Small, fast local model · download if needed' },
+          { model: 'codellama:7b-instruct', description: 'Larger local model · download if needed' },
+        ];
+        const installedChoices = installedModels.map((model) => ({
+          label: model,
+          description: 'Installed in Ollama',
+          installed: true,
+        }));
+        const preparedChoices = preparedModels
+          .filter(({ model }) => !installedModels.some((installed) => installed.toLowerCase() === model.toLowerCase()))
+          .map(({ model, description }) => ({ label: model, description, installed: false }));
         const selectedModel = await vscode.window.showQuickPick(
-          [
-            { label: 'qwen2.5-coder:1.5b-instruct', description: 'Small, fast local model' },
-            { label: 'codellama:7b-instruct', description: 'Larger local model' },
-          ],
-          { placeHolder: 'Select local Ollama model' },
+          [...installedChoices, ...preparedChoices],
+          {
+            placeHolder: installedModels.length
+              ? 'Select an installed Ollama model or a prepared model to download'
+              : 'No Ollama models detected; select a prepared model to download',
+            matchOnDescription: true,
+          },
         );
         if (!selectedModel) return;
         await aiConfig.update('aiProvider', 'ollama', vscode.ConfigurationTarget.Global);
         await aiConfig.update('aiModel', selectedModel.label, vscode.ConfigurationTarget.Global);
-        startOllamaPull(selectedModel.label);
+        if (selectedModel.installed) {
+          await backend.checkOllama();
+          aiStatusBarItem.text = backend.isOllamaModelAvailable()
+            ? '$(check) AI: Ollama'
+            : '$(warning) AI: Ollama';
+          aiStatusBarItem.tooltip = backend.isOllamaModelAvailable()
+            ? `Ollama model ${selectedModel.label} is ready.`
+            : `Could not confirm ${selectedModel.label}. Check that Ollama is running.`;
+          if (backend.isOllamaModelAvailable()) {
+            vscode.window.showInformationMessage(`Selected installed Ollama model ${selectedModel.label}.`);
+          } else {
+            vscode.window.showWarningMessage(`Could not connect to Ollama or find ${selectedModel.label}. Check that Ollama is running.`);
+          }
+        } else {
+          startOllamaPull(selectedModel.label);
+        }
         return;
       }
 
@@ -903,6 +1087,14 @@ export function activate(context: vscode.ExtensionContext) {
     contextCreateListener,
     contextChangeListener,
     contextDeleteListener,
+    securityWatcher,
+    securityCreateListener,
+    securityChangeListener,
+    securityDeleteListener,
+    { dispose: () => {
+      for (const timer of workspaceScanTimers.values()) clearTimeout(timer);
+      workspaceScanTimers.clear();
+    } },
   );
 
   // A1: ensure backend is up before first scan (bundled exe, zero terminal)
@@ -930,6 +1122,7 @@ export function activate(context: vscode.ExtensionContext) {
         void scanDocument(activeEditor.document);
       }
       workspaceContextRefresh = refreshWorkspaceContext();
+      void scanWorkspace();
     }
   })();
 
@@ -1029,7 +1222,7 @@ function diagnosticsToFindings(diagnostics: readonly vscode.Diagnostic[]): Findi
 async function fixAllFile(
   document: vscode.TextDocument,
   diagnosticCollection: vscode.DiagnosticCollection,
-  findingsByUri: Map<vscode.Uri, Finding[]>,
+  findingsByUri: Map<string, Finding[]>,
   findingVersionsByUri: Map<string, number>,
   rescan: () => void | Promise<void>,
 ): Promise<void> {
@@ -1039,7 +1232,7 @@ async function fixAllFile(
     await rescan();
     return;
   }
-  const findings = findingsByUri.get(document.uri) || [];
+  const findings = findingsByUri.get(document.uri.toString()) || [];
 
   // Deduplicate findings by line+column+rule_id to avoid overlapping edits
   const seen = new Set<string>();
@@ -1472,6 +1665,8 @@ async function applyAiFix(
   const diagnosticRange = diagnostic.range;
   const range = aiFixRange(document, diagnostic);
   const line = diagnosticRange.start.line + 1;
+  const configuredProvider = vscode.workspace.getConfiguration('secureCoding').get<string>('aiProvider', 'ollama');
+  const configuredModel = vscode.workspace.getConfiguration('secureCoding').get<string>('aiModel', '');
   const originalVersion = document.version;
   const originalSource = document.getText();
   const findingData = {
@@ -1528,7 +1723,7 @@ async function applyAiFix(
             return;
           }
         }
-        if (suggestion.secure_code.length > 4000 || suggestion.secure_code.includes('```')) {
+        if (suggestion.secure_code.length > 12000 || suggestion.secure_code.includes('```')) {
           const fallback = useLocalTemplate('The model response was not a focused replacement.');
           if (fallback) suggestion = fallback;
           else {
@@ -1565,7 +1760,7 @@ async function applyAiFix(
         }
         let previewSource = composeAiPreview(originalSource, startOffset, endOffset, prepared, document);
         baselineFindingCount = Math.max(1, baselineFindingCount);
-        let validationError = await validateAiPreview(
+        let validation = await validateAiPreview(
           document.languageId,
           previewSource,
           document.fileName,
@@ -1573,14 +1768,14 @@ async function applyAiFix(
           findingData.rule_id,
           baselineFindingCount,
         );
-        if (validationError && suggestion.source !== 'template') {
-          const fallback = useLocalTemplate(`The AI patch did not pass validation: ${validationError}`);
+        if (validation.syntaxError && suggestion.source !== 'template') {
+          const fallback = useLocalTemplate(`The AI patch did not pass syntax validation: ${validation.syntaxError}`);
           if (fallback) {
             suggestion = fallback;
             prepared = prepareAiReplacementWithImports(document, range, fallback.secure_code, finding);
             secureCode = prepared.text;
             previewSource = composeAiPreview(originalSource, startOffset, endOffset, prepared, document);
-            validationError = await validateAiPreview(
+            validation = await validateAiPreview(
               document.languageId,
               previewSource,
               document.fileName,
@@ -1590,17 +1785,36 @@ async function applyAiFix(
             );
           }
         }
-        if (validationError) {
-          await onFixFailure(`The proposed fix was not applied because validation found: ${validationError} No code was changed. Try a stronger model or choose another configured model.`);
+        if (validation.syntaxError) {
+          const previewChoice = await vscode.window.showWarningMessage(
+            `The AI proposal has a syntax issue: ${validation.syntaxError} It cannot be applied, but you can inspect the candidate.`,
+            { modal: true },
+            'Preview Candidate',
+          );
+          if (previewChoice !== 'Preview Candidate') return;
+          const invalidPreview = await vscode.workspace.openTextDocument({ language: document.languageId, content: previewSource });
+          await vscode.commands.executeCommand('vscode.diff', document.uri, invalidPreview.uri, `AI Candidate (syntax review): ${finding.title}`);
           return;
         }
+        const applyLabel = validation.findingRemains ? 'Apply Anyway' : 'Apply Fix';
+        const originNotice = suggestion.source === 'template'
+          ? (() => {
+              const details = [suggestion.warning, suggestion.explanation]
+                .map((value) => value?.trim())
+                .filter((value): value is string => Boolean(value))
+                .filter((value, index, values) => values.indexOf(value) === index);
+              return `Built-in CodeShield fallback used; this patch was not generated by the selected model. ${details.length ? `Reason/details: ${details.join(' ')}` : 'The model did not provide a usable focused patch.'}`;
+            })()
+          : suggestion.source === 'provider'
+            ? `Model-generated proposal from ${suggestion.provider || configuredProvider}${configuredModel ? ` (${configuredModel})` : ''}.`
+            : 'The fix origin was not reported by the backend; treat it as unverified and review the patch carefully.';
         const confirmed = await vscode.window.showInformationMessage(
-          `${suggestion.warning ? `${suggestion.warning} ` : ''}AI prepared a focused fix for ${finding.title}. A short “Why” comment is included where it can be added safely.`,
+          `${originNotice} Focused fix for ${finding.title}. A short “Why” comment is included where it can be added safely.${validation.findingRemains ? ` The scanner still reports ${findingData.rule_id}.` : ''}`,
           { modal: true },
           'Preview Fix',
-          'Apply Fix',
+          applyLabel,
         );
-        let apply = confirmed === 'Apply Fix';
+        let apply = confirmed === applyLabel;
         if (confirmed === 'Preview Fix') {
           const previewDocument = await vscode.workspace.openTextDocument({
             language: document.languageId,
@@ -1612,11 +1826,13 @@ async function applyAiFix(
             previewDocument.uri,
             `AI Fix Preview: ${finding.title}`,
           );
-          apply = (await vscode.window.showInformationMessage(
-            'Apply the patch shown in the diff?',
+          apply = (await vscode.window.showWarningMessage(
+            validation.findingRemains
+              ? `The scanner still reports ${findingData.rule_id}. Apply the reviewed candidate anyway?`
+              : 'Apply the patch shown in the diff?',
             { modal: true },
-            'Apply Fix',
-          )) === 'Apply Fix';
+            applyLabel,
+          )) === applyLabel;
         }
         if (apply) {
           if (document.version !== originalVersion || document.getText() !== originalSource) {
@@ -1669,7 +1885,7 @@ async function validateAiPreview(
   backendUrl: string,
   ruleId: string,
   baselineFindingCount: number,
-): Promise<string | undefined> {
+): Promise<{ syntaxError?: string; findingRemains?: string }> {
   const response = await fetch(`${backendUrl}/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -1679,10 +1895,12 @@ async function validateAiPreview(
   const result = await response.json() as { findings?: { rule_id?: string; message?: string }[] };
   const findings = result.findings || [];
   const parseFinding = findings.find((finding) => finding.rule_id === 'PARSE-ERROR');
-  if (parseFinding) return `The patch would leave invalid ${languageId} syntax (${parseFinding.message || 'parse error'}).`;
+  if (parseFinding) {
+    return { syntaxError: `The patch would leave invalid ${languageId} syntax (${parseFinding.message || 'parse error'}).` };
+  }
   const remainingCount = findings.filter((finding) => finding.rule_id === ruleId).length;
   if (remainingCount >= baselineFindingCount) {
-    return `The scanner still detects ${ruleId} in the preview (${remainingCount} finding${remainingCount === 1 ? '' : 's'} remain).`;
+    return { findingRemains: `The scanner still detects ${ruleId} in the preview (${remainingCount} finding${remainingCount === 1 ? '' : 's'} remain).` };
   }
-  return undefined;
+  return {};
 }

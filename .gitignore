@@ -1,14 +1,77 @@
-# Python
-venv/
+# Local credentials and secret material
+.env
+.env.*
+!.env.example
+!.env.template
+!.env.sample
+.npmrc
+.pypirc
+.netrc
+.aws/
+.azure/
+.gcloud/
+.ssh/
+secrets/
+credentials.json
+**/credentials*.json
+*.pem
+*.key
+*.p12
+*.pfx
+*.jks
+*.keystore
+id_rsa*
+id_ed25519*
+
+# Python environments, bytecode, and test caches
 __pycache__/
-*.pyc
+*.py[cod]
+*.pyd
+.Python
+.venv/
+venv/
+env/
+backend/env*/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+.coverage.*
+htmlcov/
 
-# Node
+# Node dependencies and compiled extension output
 node_modules/
+extension/out/
+.npm/
+npm-debug.log*
 
-# VSCode compiled output — keep if you want, remove if you prefer clean build
-# extension/out/
+# Backend build artifacts and local scanner reports
+backend/build/
+backend/dist/
+backend/dist-macos/
+backend/eval-results.json
+backend/perf-results.json
 
-# OS junk
+# Platform-specific backend binaries are built locally for VSIX packaging
+extension/server/codeshield-backend.exe
+extension/server/codeshield-backend-macos
+extension/server/codeshield-backend-linux
+
+# Packaged extensions and extracted VSIX metadata
+*.vsix
+vsix-backup/
+/\[Content_Types\].xml
+/extension.vsixmanifest
+
+# Temporary files, logs, local output, and obsolete helper scripts
+*.log
+*.tmp
+*.bak
+extension/compile-out.txt
+/fix_ai_fix.py
+
+# VS Code test and OS-generated files
+.vscode-test/
 .DS_Store
 Thumbs.db
+Desktop.ini

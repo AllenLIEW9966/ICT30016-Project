@@ -1,4 +1,4 @@
-"""M2 30-case validation corpus (O-01 detection-rate evidence).
+"""M2 validation corpus (O-01 detection-rate evidence).
 
 Each case: id, language, code, expected rule (or None for clean/negatives).
 TP cases must fire the expected rule; FP cases must NOT fire.
@@ -12,7 +12,7 @@ CASES: list[dict] = [
     {"id": "PY-TP-02", "language": "python", "expect": "PY-SQLI-001",
      "code": 'def g(u):\n q="SELECT * FROM t WHERE id="+u\n cursor.execute(q)\n'},
     {"id": "PY-TP-03", "language": "python", "expect": "PY-CMD-001",
-     "code": 'import subprocess\ndef r(p):\n subprocess.call(f"rm -rf {p}")\n'},
+     "code": 'import subprocess\ndef r(p):\n subprocess.call(f"rm -rf {p}", shell=True)\n'},
     {"id": "PY-TP-04", "language": "python", "expect": "PY-SECRETS-001",
      "code": 'DB_PASSWORD = "s3cr3t-prod-key"\n'},
     {"id": "PY-TP-05", "language": "python", "expect": "PY-PATH-001",
@@ -31,6 +31,12 @@ CASES: list[dict] = [
      "code": 'import hashlib\nhashlib.sha1(data).hexdigest()\n'},
     {"id": "PY-TP-12", "language": "python", "expect": "PY-CONFIG-001",
      "code": 'DEBUG = True\n'},
+    {"id": "PY-TP-13", "language": "python", "expect": "PY-SSRF-001",
+     "code": 'import requests\ndef fetch_avatar(avatar_url):\n return requests.get(avatar_url, timeout=5).content\n'},
+    {"id": "PY-TP-14", "language": "python", "expect": "PY-PATH-001",
+     "code": 'import os\nBASE_DIR="/var/www/uploads"\ndef download_user_file(filename):\n filepath=os.path.join(BASE_DIR, filename)\n with open(filepath, "r") as f: return f.read()\n'},
+    {"id": "PY-TP-15", "language": "python", "expect": "PY-PASSWORD-HASH-001",
+     "code": 'import hashlib\ndef store_password(raw_password):\n return hashlib.sha256(raw_password.encode()).hexdigest()\n'},
     # ---- Python negatives / false-positive probes (5) ----
     {"id": "PY-FP-01", "language": "python", "expect": None,
      "code": 'cursor.execute("SELECT * FROM t")\n'},
@@ -61,6 +67,8 @@ CASES: list[dict] = [
      "code": 'debugger;\nfunction f(){}\n'},
     {"id": "JS-TP-09", "language": "javascript", "expect": "JS-JWT-001",
      "code": 'function d(t){ return jwt.decode(t); }\n'},
+    {"id": "JS-TP-10", "language": "javascript", "expect": "JS-SQLI-001",
+     "code": 'const userId=process.argv[2];\nconst query=`SELECT * FROM users WHERE id = ${userId}`;\ndb.query(query);\n'},
     # ---- JS negatives (4) ----
     {"id": "JS-FP-01", "language": "javascript", "expect": None,
      "code": 'function g(n){ console.log("Hello, "+n); }\n'},
@@ -71,4 +79,10 @@ CASES: list[dict] = [
      "negative": True},
     {"id": "JS-FP-04", "language": "javascript", "expect": None,
      "code": 'const v=JSON.parse(text);\n'},
+    {"id": "PY-FP-06", "language": "python", "expect": None,
+     "code": 'import os\ndef read_file(name):\n base=os.path.realpath(BASE_DIR)\n path=os.path.realpath(os.path.join(base, name))\n if os.path.commonpath([base, path]) != base: raise ValueError("outside base")\n return open(path).read()\n'},
+    {"id": "PY-FP-07", "language": "python", "expect": None,
+     "code": 'from urllib.parse import urlparse\ndef fetch(url, allowed_hosts):\n parsed=urlparse(url)\n if parsed.scheme != "https" or parsed.hostname not in allowed_hosts: raise ValueError("blocked")\n return requests.get(url, allow_redirects=False)\n'},
+    {"id": "JS-FP-05", "language": "javascript", "expect": None,
+     "code": 'const output=document.getElementById("output");\noutput.textContent=message;\n'},
 ]

@@ -112,7 +112,7 @@ def main() -> None:
     ai_pass = (ai["max"] < 1500) if ai_lat else False
     mem_pass = (mem1 < 6000) if mem1 > 0 else None
     report = {
-        "mode": "live-ollama" if live else "template-fallback",
+        "mode": "configured-provider-full-sample" if live else "configured-provider-first-10-sample",
         "ai_samples": n,
         "ai_ok": ai_ok,
         "ai_latency_ms": ai,
@@ -125,12 +125,12 @@ def main() -> None:
     md = (
         "# CodeShield AI — Perf Report (NFR-01 AI, NFR-03 memory, M4)\n\n"
         f"- AI patch mode: {report['mode']} ({ai_ok}/{n} ok)\n"
-        f"- AI latency: p50={ai['p50']}ms p95={ai['p95']}ms max={ai['max']}ms "
-        f"{'PASS (<1500ms)' if ai_pass else 'CHECK (needs live Ollama on GPU)'}\n"
+        f"- Configured-provider latency: p50={ai['p50']}ms p95={ai['p95']}ms max={ai['max']}ms "
+        f"{'under 1500ms' if ai_pass else 'over/unavailable (review sample outcomes)'}\n"
         f"- Backend RSS: {mem1:.1f} MB; JS worker RSS: {worker_mb:.1f} MB "
         f"(cap 6000 MB) {'PASS' if mem_pass else 'CHECK'}\n"
-        "- M4: extension `npm run compile` clean; backend tests 26/26; "
-        "debounce 500ms; scan p50<5ms (see EVAL-REPORT.md).\n"
+        "- This benchmark may include model responses and built-in fallbacks. Inspect each run's provider/model and `ai_ok` count; "
+        "fallback timing must not be presented as model latency. Static scan metrics are in `EVAL-REPORT.md`; current suite results are in `SUBMISSION-CHECKLIST.md`.\n"
     )
     (BACKEND / "PERF-REPORT.md").write_text(md)
     print(md)

@@ -3,9 +3,23 @@ import * as cp from 'child_process';
 import * as fs from 'fs';
 import * as path from 'path';
 
+/** Prefer the IPv4 loopback address used by the bundled backend on Windows. */
+export function normalizeBackendUrl(value: string): string {
+  const trimmed = value.trim().replace(/\/$/, '');
+  try {
+    const url = new URL(trimmed);
+    if (url.hostname.toLowerCase() === 'localhost') {
+      url.hostname = '127.0.0.1';
+    }
+    return url.toString().replace(/\/$/, '');
+  } catch {
+    return trimmed;
+  }
+}
+
 /** A1: backend lifecycle manager — bundled exe first, dev server fallback. */
 export class BackendManager {
-  private readonly expectedBackendVersion = '0.1.15';
+  private readonly expectedBackendVersion = '0.1.17';
   private proc: cp.ChildProcess | null = null;
   private out: vscode.OutputChannel;
   private url: string;
@@ -14,17 +28,20 @@ export class BackendManager {
   private ollamaModelAvailable = false;
 
   constructor(url: string, ollamaUrl: string) {
-    this.url = url.replace(/\/$/, '');
+    this.url = normalizeBackendUrl(url);
     this.ollamaUrl = ollamaUrl.replace(/\/$/, '');
     this.out = vscode.window.createOutputChannel('CodeShield');
   }
 
   private bundledExe(ctx: vscode.ExtensionContext): string | null {
     const base = ctx.extensionPath;
-    const names =
-      process.platform === 'win32'
-        ? ['server/codeshield-backend.exe']
-        : ['server/codeshield-backend', 'server/codeshield-backend-macos'];
+    const names = process.platform === 'win32'
+      ? ['server/codeshield-backend.exe']
+      : process.platform === 'darwin'
+        ? ['server/codeshield-backend-macos']
+        : process.platform === 'linux'
+          ? ['server/codeshield-backend-linux', 'server/codeshield-backend']
+          : [];
     for (const n of names) {
       const p = path.join(base, n);
       try {
@@ -114,24 +131,44 @@ export class BackendManager {
     }
     try {
       // A2: hand VS Code's own Node to the backend so users never install Node.
-      const env = { ...process.env, CODESHIELD_NODE_BIN: process.execPath };
+      const env = { ...process.env, CODESHIELD_NODE_BIN: process.execPath, ELECTRON_RUN_AS_NODE: '1' };
       this.proc = cp.spawn(cmd, args, { cwd, windowsHide: true, env });
     } catch (err) {
       this.out.appendLine(`[backend] spawn failed: ${err}`);
       status.text = '$(alert) CodeShield: backend failed';
       return false;
     }
-    this.proc.stdout?.on('data', (d) => this.out.append(d.toString()));
-    this.proc.stderr?.on('data', (d) => this.out.append(d.toString()));
-    this.proc.on('exit', (code) => {
-      this.out.appendLine(`[backend] exited code=${code}`);
+    let startupOutput = '';
+    let competingBackendLikely = false;
+    let childExitAt: number | undefined;
+    const captureStartupOutput = (data: Buffer | string) => {
+      const text = data.toString();
+      startupOutput = `${startupOutput}${text}`.slice(-10000);
+      this.out.append(text);
+      if (/EADDRINUSE|WinError\s*10048|only one usage of each socket address|address already in use/i.test(startupOutput)) {
+        competingBackendLikely = true;
+      }
+    };
+    this.proc.stdout?.on('data', captureStartupOutput);
+    this.proc.stderr?.on('data', captureStartupOutput);
+    this.proc.on('error', (error) => {
+      this.out.appendLine(`[backend] process error: ${error.message}`);
+      childExitAt = Date.now();
       this.proc = null;
     });
+    this.proc.on('exit', (code) => {
+      this.out.appendLine(`[backend] exited code=${code}`);
+      childExitAt = Date.now();
+      this.proc = null;
+    });
+    const startupStartedAt = Date.now();
     for (let i = 0; i < 30; i++) {
       await new Promise((r) => setTimeout(r, 1000));
       const health = await this.healthState();
       if (health === 'current') {
-        this.out.appendLine('[backend] ready');
+        this.out.appendLine(competingBackendLikely
+          ? '[backend] connected to the healthy backend already using this port.'
+          : '[backend] ready');
         await this.checkOllama();
         return true;
       }
@@ -143,12 +180,21 @@ export class BackendManager {
         );
         return false;
       }
-      if (this.proc === null) {
+      // Another VS Code window can win the race to bind the shared local port.
+      // Its server may still be finishing startup after our child exits; retry
+      // health briefly instead of immediately declaring this window offline.
+      if (this.proc === null && (!competingBackendLikely || (childExitAt !== undefined && Date.now() - childExitAt >= 10000))) {
         break;
       }
     }
     status.text = '$(alert) CodeShield: backend failed';
-    this.out.appendLine('[backend] did not become ready in 30s.');
+    this.out.appendLine(`[backend] did not become ready after ${Math.round((Date.now() - startupStartedAt) / 1000)}s.`);
+    if (competingBackendLikely) {
+      this.out.appendLine(`[backend] a process is using ${this.url}, but it did not expose a compatible CodeShield health endpoint.`);
+      vscode.window.showErrorMessage(
+        `CodeShield could not connect to a compatible backend at ${this.url}. Another process may be using that port; close it or configure a free backend port.`,
+      );
+    }
     return false;
   }
 

@@ -34,7 +34,7 @@ exec("malicious_code")
 
 VULNERABLE_CMD = """
 import subprocess
-subprocess.call(f"rm -rf {path}")
+subprocess.call(f"rm -rf {path}", shell=True)
 """
 
 VULNERABLE_SECRET = """
@@ -263,11 +263,92 @@ def test_o02_context_window():
 
 def test_o02_template_fallback():
     from app.ai.templates import template_fix
-    tpl = template_fix("python", "PY-SQLI-001")
+    source = 'def g(uid):\n query=f"SELECT * FROM users WHERE id={uid}"\n cursor.execute(query)\n'
+    tpl = template_fix(
+        "python", "PY-SQLI-001", code_snippet="cursor.execute(query)", full_source=source, line=3,
+    )
     assert tpl and "?" in tpl["secure_code"], tpl
-    tpl2 = template_fix("javascript", "JS-XSS-001")
-    assert tpl2 and "textContent" in tpl2["secure_code"], tpl2
+    # JS fixes are range/context specific in the extension; backend must not
+    # fabricate a context-free replacement.
+    assert template_fix("javascript", "JS-XSS-001") is None
     assert template_fix("python", "NOPE-000") is None
+
+
+def test_python_ssrf_avatar_parameter():
+    source = 'import requests\ndef fetch_avatar(avatar_url):\n return requests.get(avatar_url, timeout=5).content\n'
+    findings = scan(source, "avatar.py")
+    assert any(f["rule_id"] == "PY-SSRF-001" for f in findings), findings
+
+
+def test_python_path_traversal_joined_filename():
+    source = 'import os\nBASE_DIR="/var/www/uploads"\ndef download_user_file(filename):\n filepath=os.path.join(BASE_DIR, filename)\n with open(filepath, "r") as f: return f.read()\n'
+    findings = scan(source, "download.py")
+    assert any(f["rule_id"] == "PY-PATH-001" for f in findings), findings
+
+
+def test_python_path_allowlist_suppresses_path_finding():
+    source = ('import os\ndef read_file(name):\n base=os.path.realpath(BASE_DIR)\n'
+              ' path=os.path.realpath(os.path.join(base, name))\n'
+              ' if os.path.commonpath([base, path]) != base: raise ValueError("outside base")\n'
+              ' return open(path).read()\n')
+    findings = scan(source, "safe_path.py")
+    assert not any(f["rule_id"] == "PY-PATH-001" for f in findings), findings
+
+
+def test_python_ssrf_allowlist_suppresses_ssrf_finding():
+    source = ('from urllib.parse import urlparse\ndef fetch(url, allowed_hosts):\n'
+              ' parsed=urlparse(url)\n'
+              ' if parsed.scheme != "https" or parsed.hostname not in allowed_hosts: raise ValueError("blocked")\n'
+              ' return requests.get(url, allow_redirects=False)\n')
+    findings = scan(source, "safe_fetch.py")
+    assert not any(f["rule_id"] == "PY-SSRF-001" for f in findings), findings
+
+
+def test_python_password_uses_slow_hash_finding():
+    source = 'import hashlib\ndef store_password(raw_password):\n return hashlib.sha256(raw_password.encode()).hexdigest()\n'
+    findings = scan(source, "passwords.py")
+    assert any(f["rule_id"] == "PY-PASSWORD-HASH-001" for f in findings), findings
+
+
+def test_js_sql_injection_through_query_alias():
+    source = 'const userId=process.argv[2];\nconst query=`SELECT * FROM users WHERE id = ${userId}`;\ndb.query(query);\n'
+    findings = js_scanner.scan(source, "query.js")
+    assert any(f["rule_id"] == "JS-SQLI-001" for f in findings), findings
+
+
+def test_js_safe_text_content_is_not_xss():
+    source = 'const output=document.getElementById("output");\noutput.textContent=message;\n'
+    findings = js_scanner.scan(source, "safe_dom.js")
+    assert not any(f["rule_id"] == "JS-XSS-001" for f in findings), findings
+
+
+def test_sensitive_context_redaction():
+    from app.ai.context import redact_sensitive_text
+    source = 'API_KEY = "sk-live-example-secret"\nPASSWORD = os.environ.get("DB_PASSWORD")\n'
+    result = redact_sensitive_text(source)
+    assert "sk-live-example-secret" not in result, result
+    assert 'API_KEY = "[REDACTED]"' in result, result
+    assert 'PASSWORD = os.environ.get("DB_PASSWORD")' in result, result
+
+
+def test_sensitive_context_redacts_key_blocks_and_url_credentials():
+    from app.ai.context import redact_sensitive_text
+    source = ('service_url = "https://demo:pw-value@example.invalid/path"\n'
+              '-----BEGIN PRIVATE KEY-----\nprivate-material\n-----END PRIVATE KEY-----\n')
+    result = redact_sensitive_text(source)
+    assert "pw-value" not in result, result
+    assert "private-material" not in result, result
+
+
+def test_rule_owasp_mappings():
+    py = scan('PASSWORD = "real-secret-value"\n', "secret.py")
+    js_xss = js_scanner.scan('document.getElementById("x").innerHTML = input;\n', "x.js")
+    js_jwt = js_scanner.scan('jwt.decode(token);\n', "jwt.js")
+    js_random = js_scanner.scan('function createSessionToken(){ return Math.random().toString(36); }\n', "random.js")
+    assert next(f for f in py if f["rule_id"] == "PY-SECRETS-001")["owasp_ref"].startswith("A07:2021-")
+    assert next(f for f in js_xss if f["rule_id"] == "JS-XSS-001")["owasp_ref"] == "A03:2021-Injection"
+    assert next(f for f in js_jwt if f["rule_id"] == "JS-JWT-001")["owasp_ref"].startswith("A07:2021-")
+    assert next(f for f in js_random if f["rule_id"] == "JS-RANDOM-001")["owasp_ref"] == "A02:2021-Cryptographic-Failures"
 
 
 if __name__ == "__main__":
@@ -298,6 +379,16 @@ if __name__ == "__main__":
         test_o03_true_positive_retained,
         test_o02_context_window,
         test_o02_template_fallback,
+        test_python_ssrf_avatar_parameter,
+        test_python_path_traversal_joined_filename,
+        test_python_path_allowlist_suppresses_path_finding,
+        test_python_ssrf_allowlist_suppresses_ssrf_finding,
+        test_python_password_uses_slow_hash_finding,
+        test_js_sql_injection_through_query_alias,
+        test_js_safe_text_content_is_not_xss,
+        test_sensitive_context_redaction,
+        test_sensitive_context_redacts_key_blocks_and_url_credentials,
+        test_rule_owasp_mappings,
     ]
 
     for test in tests:

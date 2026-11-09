@@ -165,6 +165,36 @@ def _exec_usage(node: ast.Expr) -> bool:
     )
 
 
+def _password_hash_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Catch fast general-purpose hashes applied to password input in a password flow."""
+    password_names = {
+        arg.arg for arg in list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+        if any(token in arg.arg.lower() for token in ("password", "passwd", "passphrase"))
+    }
+    if not password_names and not any(token in node.name.lower() for token in ("password", "passwd", "passphrase")):
+        return False
+    if not password_names:
+        password_names = {
+            arg.arg for arg in list(node.args.posonlyargs) + list(node.args.args) + list(node.args.kwonlyargs)
+        }
+    fast_hashes = {"sha256", "sha512", "sha3_256", "sha3_512", "blake2b", "blake2s"}
+    for call in (item for item in ast.walk(node) if isinstance(item, ast.Call)):
+        function = call.func
+        algorithm = None
+        if isinstance(function, ast.Attribute) and function.attr in fast_hashes:
+            algorithm = function.attr
+            if isinstance(function.value, ast.Name) and function.value.id != "hashlib":
+                continue
+        elif isinstance(function, ast.Name) and function.id in fast_hashes:
+            algorithm = function.id
+        if algorithm and any(
+            isinstance(child, ast.Name) and child.id in password_names
+            for arg in call.args for child in ast.walk(arg)
+        ):
+            return True
+    return False
+
+
 # A08:2021 — pickle.loads / yaml.load unsafe deserialization
 def _unsafe_deserialize(node: ast.Call) -> bool:
     if isinstance(node.func, ast.Attribute) and node.func.attr in {"loads", "load"}:
@@ -321,12 +351,25 @@ _rule(
 )
 
 _rule(
+    id="PY-PASSWORD-HASH-001",
+    title="Fast Hash Used for Password Storage",
+    severity="high",
+    confidence="medium",
+    cwe_id="CWE-916",
+    owasp_ref="A02:2021-Cryptographic-Failures",
+    message="Fast general-purpose hashes such as SHA-256 are unsuitable for password storage. Use a password-hashing scheme with a salt and work factor, and plan migration for existing hashes.",
+    suggestion="Use the project's established Argon2id, scrypt, bcrypt, or PBKDF2 password-hashing library; do not replace stored password hashes without a migration plan.",
+    checker="function",
+    matches=_password_hash_function,
+)
+
+_rule(
     id="PY-SECRETS-001",
     title="Potential Hardcoded Secret",
     severity="high",
     confidence="medium",
     cwe_id="CWE-798",
-    owasp_ref="A04:2021-Insecure-Design",
+    owasp_ref="A07:2021-Identification-and-Authentication-Failures",
     message="CodeShield detected a possible hard-coded secret. Move the value to an environment variable or secret manager.",
     suggestion="Load from os.environ or a secrets manager: os.environ['DB_PASSWORD']",
     checker="assign",

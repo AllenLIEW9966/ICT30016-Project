@@ -76,38 +76,38 @@ JS_RULES = [
         "suggestion": "Allowlist trusted hosts and reject loopback, private, and link-local destinations.",
         "pattern": re.compile(r"(?:fetch|axios\.(?:get|post|put|delete)|request)\s*\(\s*(?:req|request|ctx)\.(?:query|params|body|url)"),
     },
-    # A07:2021 — XSS via innerHTML / document.write
+    # A03:2021 — XSS is included under Injection in the 2021 Top 10.
     {
         "id": "JS-XSS-001",
         "title": "Potential XSS via innerHTML / document.write",
         "severity": "high",
         "confidence": "medium",
         "cwe_id": "CWE-79",
-        "owasp_ref": "A07:2021-Identification-and-Authentication-Failures",
+        "owasp_ref": "A03:2021-Injection",
         "message": "Assigning user-controlled content to innerHTML or document.write may cause XSS.",
         "suggestion": "Use textContent for text, or sanitize with DOMPurify before innerHTML.",
         "pattern": re.compile(r"\.innerHTML\s*=|document\.write\s*\("),
     },
-    # A08:2021 — Math.random not for security use
+    # A02:2021 — predictable randomness used for security tokens is a cryptographic failure.
     {
         "id": "JS-RANDOM-001",
         "title": "Insecure Randomness (Math.random)",
         "severity": "medium",
         "confidence": "high",
         "cwe_id": "CWE-338",
-        "owasp_ref": "A08:2021-Software-and-Data-Integrity-Failures",
+        "owasp_ref": "A02:2021-Cryptographic-Failures",
         "message": "Math.random() is not cryptographically secure.",
         "suggestion": "Use crypto.getRandomValues() for security-sensitive random values.",
         "pattern": re.compile(r"Math\.random\s*\("),
     },
-    # A04:2021 — hardcoded secret pattern
+    # A07:2021 — hardcoded credentials can undermine authentication.
     {
         "id": "JS-SECRETS-001",
         "title": "Potential Hardcoded Secret",
         "severity": "high",
         "confidence": "medium",
         "cwe_id": "CWE-798",
-        "owasp_ref": "A04:2021-Insecure-Design",
+        "owasp_ref": "A07:2021-Identification-and-Authentication-Failures",
         "message": "CodeShield detected a possible hard-coded secret. Move the value to an environment variable or secret manager.",
         "suggestion": "Load secrets from process.env, a .env file, or a secrets manager.",
         "pattern": re.compile(
@@ -127,14 +127,14 @@ JS_RULES = [
         "suggestion": "Remove debugger statements or wrap them behind a dev-only flag.",
         "pattern": re.compile(r"^\s*debugger\s*;", re.MULTILINE),
     },
-    # A10:2021 — jwt.decode doesn't verify signature
+    # A07:2021 — accepting an unverified JWT can bypass authentication.
     {
         "id": "JS-JWT-001",
         "title": "Potential Insecure JWT Verification",
         "severity": "high",
         "confidence": "medium",
         "cwe_id": "CWE-345",
-        "owasp_ref": "A10:2021-Server-Side-Request-Forgery-(SSRF)",
+        "owasp_ref": "A07:2021-Identification-and-Authentication-Failures",
         "message": "JWT decode() does not verify signature. Use verify() with a trusted secret/public key.",
         "suggestion": "Use jsonwebtoken.verify(token, secretOrPublicKey) or jose.verify().",
         "pattern": re.compile(r"jwt\.decode\s*\("),

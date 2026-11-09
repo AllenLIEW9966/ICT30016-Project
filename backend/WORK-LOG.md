@@ -1,0 +1,2 @@
+- Final backend suite rerun: 36/36 passed.
+- Extension TypeScript compile: passed for 0.1.30.

@@ -1,64 +1,71 @@
-# Secure Coding Assistant
+# CodeShield AI — Secure Coding Assistant
 
-A VS Code extension + FastAPI backend that statically scans Python and JavaScript for common security issues while you type, then suggests fixes using local or cloud AI. It keeps a bounded local workspace context cache to improve requested AI fixes; context collection does not create findings.
+CodeShield AI is a VS Code prototype that scans Python and JavaScript documents for selected security patterns, explains findings with CWE and OWASP references, and offers rule-based or AI-assisted fixes.
 
-## What it does
+## Current coverage and limits
 
-- Scans Python and JS files in real time
-- Highlights risky code with red squiggles
-- Shows OWASP/CWE info on hover
-- Suggests secure alternatives
-- Can use AI to generate a fix
-- Keeps relevant workspace source and configuration in a local context cache for AI fixes
+- Automatically scans Python and JavaScript files in the workspace after the backend starts, including unopened files. It refreshes findings when supported files are created, changed, or deleted, and scans the active file as it is opened, edited, or saved.
+- Workspace scans are bounded to 2,000 files, skip files larger than 512 KiB, and exclude common generated or dependency folders such as `.git`, `node_modules`, `venv`, `dist`, and `build`. Use **Secure Coding: Scan Python and JavaScript Workspace** to run a manual scan.
+- Python analysis uses the Python AST. JavaScript uses a Babel AST sidecar when available and falls back to pattern scanning if the sidecar cannot start.
+- Rules cover selected issues such as injection, unsafe command execution, XSS sinks, weak cryptography, hardcoded credentials, path traversal, SSRF, unsafe deserialization, and insecure JWT handling. This is not comprehensive SAST and a clean scan does not prove a project is secure.
+- Workspace context is collected locally to help an explicitly requested AI fix. It does not create diagnostics. Related files are selected by simple import/path/configuration relevance and bounded before use; it is not a semantic review of the whole repository.
+- Quick Fix and Fix All use deterministic, context-checked templates where available. AI Fix asks the configured model for a focused patch, validates syntax and scanner findings, and asks before applying. Models can still fail or propose incomplete fixes; review and test every change.
 
-## Setup
+## AI providers and privacy
 
-### Backend
+Ollama is the default local provider. The extension also offers Groq, Gemini, OpenRouter, and a custom OpenAI-compatible endpoint. Cloud providers require the user's API key and model access; free tiers, quotas, model IDs, and data terms can change. Cloud API keys are stored in VS Code SecretStorage.
 
-```bash
-cd backend
-python -m venv venv
-venv/Scripts/activate
-pip install -r requirements.txt
-uvicorn app.main:app --reload --port 8000
-```
+Static scanning and the workspace context cache run locally. A cloud AI fix sends the selected code and current-file context to the chosen provider. Related workspace files are sent only after a separate per-fix prompt; common credential assignments, private-key blocks, and URL credentials are redacted before prompt construction. Redaction is best-effort and cannot guarantee detection of every secret. Choose **Use Current File Only** or cancel if the project contains sensitive code. Review provider data-use terms.
 
-### AI (optional)
+## Install the packaged extension
 
-```bash
-ollama pull codellama:7b-instruct
-ollama serve
-```
+Open **Extensions** in VS Code, choose **Install from VSIX…**, and select the packaged `extension/secure-coding-assistant-<version>.vsix` file. The current local 0.1.36 package targets Windows x64; macOS/Linux backend binaries are not included. Restart VS Code if it asks.
 
-The extension defaults to local Ollama. Use **Secure Coding: Configure AI Provider** to select Ollama, Groq Free Tier, Gemini Free Tier, OpenRouter Free Models, or a custom OpenAI-compatible endpoint. The prepared cloud choices use free-tier models and require your own API key. Keys are stored in VS Code SecretStorage. Static scanning and workspace context collection run locally. For a cloud AI fix, selected-file context goes to the provider; related workspace files are included only after a separate prompt. Free quotas and model availability can change. The custom endpoint may incur charges, and Google may use free-tier API content to improve its products.
+For development, install the extension dependencies and launch the Extension Development Host:
 
-### VSCode Extension
-
-```bash
+```powershell
 cd extension
 npm install
 npm run compile
 ```
 
-Press **F5** in VS Code to test.
+Press **F5** in VS Code to launch the development host. The extension starts its bundled backend when installed as a VSIX.
 
 ## Commands
 
-- **Secure Coding: Scan Current File** — run scan manually
-- **Secure Coding: Fix with AI** — get AI suggestion for current finding
-- **Secure Coding: Show Security Score** — see score in status bar
+- **Secure Coding: Scan Current File** — run a scan on the active supported document.
+- **Secure Coding: Scan Python and JavaScript Workspace** — scan supported workspace files and show findings in the Problems panel.
+- **Secure Coding: Fix with AI** — request an AI-assisted fix for a selected finding.
+- **Secure Coding: Fix All Vulnerabilities in File** — apply available deterministic fixes in the active file.
+- **Secure Coding: Show Current File Findings** — show the active file's finding count in the status bar. This is not a workspace security grade.
+- **Secure Coding: Configure AI Provider** — select a local or cloud provider and configure its model/key.
 
-## Test
+The Ollama model picker reads installed model tags from the running Ollama service whenever it opens, so newly downloaded models appear automatically. Prepared Qwen 1.5B and CodeLlama 7B choices remain available to download if they are not installed.
 
-```bash
+## Checks
+
+Run the backend scanner tests:
+
+```powershell
 cd backend
 python app/tests.py
 ```
 
-## What I built
+Run the offline scanner evaluation corpus (does not call an AI provider):
 
-- Python scanner using AST
-- JS scanner using regex
-- FastAPI backend with /scan and /suggest-fix
-- VSCode extension with diagnostics, hover, status bar
-- AI integration via Ollama
+```powershell
+python app/evaluate.py
+```
+
+Compile the extension:
+
+```powershell
+cd extension
+npm run compile
+```
+
+The synthetic corpus measures only the documented cases. It does not establish real-world recall, model quality, or enterprise readiness. Cloud privacy requires a separate packet-capture check before release.
+
+## Packaging note
+
+The manifest publisher value must match the owner's actual Visual Studio Marketplace publisher account before marketplace publishing. A publisher account was not available to configure during this review; local VSIX installation remains available.

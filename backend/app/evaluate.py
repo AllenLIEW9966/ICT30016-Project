@@ -1,12 +1,10 @@
-"""M2/M3/M2.5 formal evaluation (report acceptance criteria).
+"""M2/M3 static scanner evaluation over a curated synthetic corpus.
 
-M2  (O-01): >80% detection on the 30-case corpus.
-M3  (O-03): >50% FP reduction vs raw matching, TP retention reported.
-M2.5(O-02): applicable patch for >70% of confirmed findings.
-NFR-01: static scan latency + AI patch latency evidence.
+M2  (O-01): >80% detection on the curated case corpus.
+M3  (O-03): false-positive reduction on Python negative probes; TP retention reported.
+NFR-01: static scan latency. AI model quality/latency is measured separately.
 
-Usage: ./venv/Scripts/python app/evaluate.py [--quick]
---quick skips live LLM calls and uses template fallback for M2.5.
+Usage: python app/evaluate.py
 Writes EVAL-REPORT.md + eval-results.json in backend/.
 """
 from __future__ import annotations
@@ -33,33 +31,7 @@ def run_scan(case: dict, validate: bool = True) -> list[dict]:
     return js_scanner.scan(case["code"], case["id"] + ".js")
 
 
-def applicable_patch(rule_id: str, language: str, code: str) -> bool:
-    """M2.5 applicability: non-empty, differs from input, keyword check."""
-    from app.ai.templates import template_fix
-    tpl = template_fix(language, rule_id)
-    if not tpl or not tpl.get("secure_code"):
-        return False
-    fix = tpl["secure_code"].strip()
-    if not fix or fix.strip() == code.strip():
-        return False
-    keys = {
-        "PY-SQLI-001": ["?", "execute"], "PY-SECRETS-001": ["environ"],
-        "PY-CMD-001": ["shell=False", "subprocess"], "PY-PATH-001": ["abspath", "startswith"],
-        "PY-SSRF-001": ["ALLOWED_HOSTS", "urlparse"], "PY-SERIAL-001": ["safe_load"],
-        "PY-CODE-EXEC-001": ["literal_eval", "json.loads"], "PY-CRYPTO-001": ["sha256"],
-        "PY-CRYPTO-002": ["sha256"], "PY-CONFIG-001": ["False", "debug"],
-        "JS-SQLI-001": ["?", "query"], "JS-XSS-001": ["textContent", "sanitize"],
-        "JS-SECRETS-001": ["process.env"], "JS-RANDOM-001": ["getRandomValues"],
-        "JS-JWT-001": ["verify"], "JS-CODE-EXEC-001": ["JSON.parse"],
-        "JS-CODE-EXEC-002": ["handlers"], "JS-CONFIG-001": ["remove", "debugger"],
-        "JS-CRYPTO-001": ["SHA-256", "Web Crypto"],
-    }
-    need = keys.get(rule_id, [])
-    return any(k.lower() in (fix + " " + tpl.get("explanation", "")).lower() for k in need)
-
-
 def main() -> None:
-    quick = "--quick" in sys.argv
     rows: list[dict] = []
     lat: list[float] = []
     # warm up persistent JS worker so cold-start spawn isn't counted
@@ -102,18 +74,6 @@ def main() -> None:
     tp_val = sum(1 for r in rows if r["pass"] and r["lang"] == "python"
                  and r["expect"] and not [c for c in CASES if c["id"] == r["id"]][0].get("negative"))
 
-    # M2.5: patch applicability on confirmed TP findings (template/LLM)
-    confirmed = [r for r in tp_cases if r["pass"]]
-    patch_hits = 0
-    ai_ms: list[float] = []
-    for r in confirmed:
-        case = next(c for c in CASES if c["id"] == r["id"])
-        t0 = time.perf_counter()
-        ok = applicable_patch(r["expect"], r["lang"], case["code"])
-        ai_ms.append((time.perf_counter() - t0) * 1000.0)
-        patch_hits += 1 if ok else 0
-    m25_rate = patch_hits / max(1, len(confirmed))
-
     lat_sorted = sorted(lat)
     p50 = lat_sorted[len(lat_sorted) // 2]
     p95 = lat_sorted[int(len(lat_sorted) * 0.95) - 1] if len(lat_sorted) > 1 else lat_sorted[0]
@@ -129,9 +89,6 @@ def main() -> None:
         "m3_tp_raw": tp_raw,
         "m3_tp_val": tp_val,
         "m3_pass": fp_reduction > 0.5,
-        "m25_patch_rate": round(m25_rate, 3),
-        "m25_hits": f"{patch_hits}/{len(confirmed)}",
-        "m25_pass": m25_rate > 0.7,
         "nfr01_scan_p50_ms": round(p50, 2),
         "nfr01_scan_p95_ms": round(p95, 2),
         "nfr01_scan_max_ms": round(max(lat), 2),
@@ -142,14 +99,13 @@ def main() -> None:
     out_json.write_text(json.dumps(report, indent=2))
     md = BACKEND / "EVAL-REPORT.md"
     md.write_text(
-        "# CodeShield AI — Evaluation Report (M2/M3/M2.5, NFR-01)\n\n"
+        "# CodeShield AI - Evaluation Report (synthetic scanner corpus)\n\n"
+        "Results measure only these curated examples and do not establish real-world detection recall.\n"
         f"- Corpus: {len(CASES)} cases ({len(tp_cases)} TP, {len(fp_cases)} negatives)\n"
         f"- M2 detection: **{m2_hits}/{len(tp_cases)} = {m2_rate:.1%}** {'PASS (>80%)' if report['m2_pass'] else 'FAIL'}\n"
-        f"- M3 FP reduction: raw={raw_fp} validated={val_fp} "
+        f"- M3 Python negative-probe reduction: raw={raw_fp} validated={val_fp} "
         f"reduction=**{fp_reduction:.1%}** {'PASS (>50%)' if report['m3_pass'] else 'FAIL'}; "
         f"TP retained raw={tp_raw} validated={tp_val}\n"
-        f"- M2.5 patch applicability: **{patch_hits}/{len(confirmed)} = {m25_rate:.1%}** "
-        f"{'PASS (>70%)' if report['m25_pass'] else 'FAIL'} (mode={'template/quick' if quick else 'live'})\n"
         f"- NFR-01 static latency: p50={p50:.1f}ms p95={p95:.1f}ms max={max(lat):.1f}ms "
         f"{'PASS (<100ms)' if report['nfr01_under_100ms'] else 'CHECK'}\n\n"
         "## Per-case\n\n| id | lang | expect | got | pass | ms |\n|---|---|---|---|---|---|\n"

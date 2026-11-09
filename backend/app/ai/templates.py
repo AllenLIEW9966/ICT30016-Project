@@ -1,8 +1,8 @@
 """O-02 fallback: deterministic templates when the local LLM is down.
 
 Each entry returns an applicable patch for the finding's rule_id.
-Used by suggest_fix when the AI call fails (report fallback:
-Tier 1 + rule-based patch templates if M2.5 inference is unavailable).
+Used by suggest_fix when the AI call fails, but only when a narrow,
+context-checked replacement can be derived safely.
 Language-aware: only returns a template when the language matches.
 """
 from __future__ import annotations
