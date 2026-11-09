@@ -17,9 +17,18 @@ Ollama is the default local provider. The extension also offers Groq, Gemini, Op
 
 Static scanning and the workspace context cache run locally. A cloud AI fix sends the selected code and current-file context to the chosen provider. Related workspace files are sent only after a separate per-fix prompt; common credential assignments, private-key blocks, and URL credentials are redacted before prompt construction. Redaction is best-effort and cannot guarantee detection of every secret. Choose **Use Current File Only** or cancel if the project contains sensitive code. Review provider data-use terms.
 
-## Install the packaged extension
+## Download and install a VSIX
 
-Open **Extensions** in VS Code, choose **Install from VSIX…**, and select the packaged `extension/secure-coding-assistant-<version>.vsix` file. The current local 0.1.36 package targets Windows x64; macOS/Linux backend binaries are not included. Restart VS Code if it asks.
+The repository builds platform-specific VSIX files through GitHub Actions. To download one:
+
+1. Open the repository's **Actions** tab and select the latest successful **Build Windows VSIX** or **Build macOS VSIX** run.
+2. At the bottom of that run's summary page, download the artifact for your platform:
+   - `secure-coding-assistant-win32-x64` — Windows x64
+   - `secure-coding-assistant-darwin-x64` — macOS Intel
+   - `secure-coding-assistant-darwin-arm64` — macOS Apple Silicon
+3. Extract the downloaded ZIP, then in VS Code open **Extensions** → **…** → **Install from VSIX…** and select the `.vsix` file.
+
+Each artifact is available only after its packaging job succeeds. These are CI build artifacts, not permanent releases; if a job fails, inspect its log and rerun it after the issue is fixed. Restart VS Code if prompted after installation.
 
 For development, install the extension dependencies and launch the Extension Development Host:
 
