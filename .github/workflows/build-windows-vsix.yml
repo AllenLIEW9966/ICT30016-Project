@@ -1,0 +1,62 @@
+name: Build Windows VSIX
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-windows-vsix.yml'
+      - 'backend/**'
+      - 'extension/**'
+  pull_request:
+    paths:
+      - '.github/workflows/build-windows-vsix.yml'
+      - 'backend/**'
+      - 'extension/**'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package win32-x64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+
+      - name: Install extension packaging dependencies
+        run: npm ci --prefix extension
+
+      - name: Compile VS Code extension
+        run: npm run compile --prefix extension
+
+      - name: Install backend build dependencies
+        run: |
+          python -m pip install -r backend/requirements.txt pyinstaller
+          npm ci --prefix backend/js-ast
+
+      - name: Build Windows backend
+        shell: cmd
+        run: backend\build-exe.bat
+
+      - name: Package Windows VSIX
+        shell: pwsh
+        working-directory: extension
+        run: |
+          $version = (Get-Content package.json -Raw | ConvertFrom-Json).version
+          & .\node_modules\.bin\vsce.cmd package --no-dependencies --target win32-x64 --out "secure-coding-assistant-win32-x64-$version.vsix"
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+
+      - name: Upload Windows VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-coding-assistant-win32-x64
+          path: extension/secure-coding-assistant-win32-x64-*.vsix
+          if-no-files-found: error
