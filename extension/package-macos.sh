@@ -45,9 +45,23 @@ rsync -a \
   --exclude='*.vsix' \
   --exclude='/server/codeshield-backend.exe' \
   "$SCRIPT_DIR/" "$STAGE/"
+if [[ ! -f "$STAGE/out/extension.js" ]]; then
+  echo "Compiled extension output is missing. Run npm run compile --prefix extension first." >&2
+  exit 1
+fi
 mkdir -p "$STAGE/server"
 cp "$BACKEND_BINARY" "$STAGE/server/codeshield-backend-macos"
 chmod 755 "$STAGE/server/codeshield-backend-macos"
+
+# The extension was compiled before staging. Remove the prepublish hook from
+# the staged manifest so vsce does not try to run tsc without staged node_modules.
+node - "$STAGE/package.json" <<'NODE'
+const fs = require("node:fs");
+const packagePath = process.argv[2];
+const manifest = JSON.parse(fs.readFileSync(packagePath, "utf8"));
+if (manifest.scripts) delete manifest.scripts["vscode:prepublish"];
+fs.writeFileSync(packagePath, `${JSON.stringify(manifest, null, 2)}\n`);
+NODE
 
 VERSION="$(node -e 'console.log(require(process.argv[1]).version)' "$SCRIPT_DIR/package.json")"
 OUTPUT="$SCRIPT_DIR/secure-coding-assistant-${TARGET}-${VERSION}.vsix"
