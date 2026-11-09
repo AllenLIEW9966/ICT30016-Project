@@ -72,7 +72,7 @@ async def suggest_fix(
     context: dict[str, Any],
 ) -> dict[str, Any]:
     # O-02: bounded context — prefer full-source window over bare snippet
-    from app.ai.context import extract_context
+    from app.ai.context import extract_context, redact_sensitive_text
 
     line = int(context.get("line", 1) or 1)
     end_line = context.get("end_line", line)
@@ -116,6 +116,14 @@ async def suggest_fix(
             "\nFor this Python path-traversal fix, resolve both the configured base and requested path with os.path.realpath, "
             "then use os.path.commonpath plus os.path.normcase to reject any path outside the base before opening it. "
             "Fail closed if path validation raises. Preserve the function signature and return behavior.\n"
+        )
+    elif language.lower() == "python" and rule_id.upper() == "PY-PASSWORD-HASH-001":
+        command_guidance = (
+            "\nThis finding concerns password storage. Do not replace SHA-256 with another fast digest. Prefer an existing "
+            "project dependency configured for Argon2id, scrypt, bcrypt, or PBKDF2. Password-hash changes often require "
+            "salt/work-factor storage and migration of existing records; inspect supplied project context and preserve the "
+            "function contract. If the required library or migration contract is absent, return can_fix=false and state "
+            "what the developer must decide. Never claim a plain SHA-256 digest is a safe password hash.\n"
         )
     elif language.lower() in {"javascript", "js"} and rule_id.upper() == "JS-CODE-EXEC-002":
         command_guidance = (
@@ -163,10 +171,13 @@ async def suggest_fix(
         ctx_start=ctx_start,
         ctx_end=ctx_end,
         total=total,
-        finding_json=json.dumps(str(code_snippet)[:4000], ensure_ascii=False),
+        finding_json=json.dumps(redact_sensitive_text(str(code_snippet)[:4000]), ensure_ascii=False),
         context_json=json.dumps({
-            "current_file_context": str(snippet),
-            "related_project_files": related_project_files,
+            "current_file_context": redact_sensitive_text(str(snippet)),
+            "related_project_files": [
+                {"path": item["path"], "content": redact_sensitive_text(item["content"])}
+                for item in related_project_files
+            ],
         }, ensure_ascii=False),
         command_guidance=command_guidance,
     )
@@ -243,7 +254,7 @@ async def suggest_fix(
         result["secure_code"] = result["secure_code"].strip()
         if "```" in result["secure_code"]:
             raise ValueError("AI response must not contain Markdown code fences")
-        if len(result["secure_code"]) > 4000:
+        if len(result["secure_code"]) > 12000:
             result["can_fix"] = False
             result["secure_code"] = ""
             result["explanation"] = "The model returned a patch that is too large for a focused fix. Review and edit the code manually."

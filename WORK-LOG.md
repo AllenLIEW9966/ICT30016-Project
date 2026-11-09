@@ -1,5 +1,11 @@
 # Work Log — Secure Coding Assistant
 
+## 2026-11-06 — Dynamic Ollama Picker and Modal Button Cleanup
+
+- Updated the Ollama model picker to query installed models from the running Ollama service and list them before pullable prepared models.
+- Removed explicit `Cancel` actions from modal prompts because VS Code supplies its own modal Cancel button; this avoids duplicated Cancel buttons. Existing cancellation paths handle a dismissed prompt.
+- Bumped the extension to 0.1.32. Compiled and packaged the VSIX; AI provider end-to-end behavior was not re-tested in this change.
+
 ## Project Info
 
 | Field | Details |
@@ -8,8 +14,8 @@
 | **Course** | ICT Software Technology Major — Project 1 |
 | **Team** | Allen (Software Technology Major) |
 | **Tech Stack** | Python, FastAPI, TypeScript, VS Code Extension API, Ollama |
-| **Repo** | https://github.com/<your-username>/secure-coding-assistant |
-| **Status** | Core features complete; ready for testing and submission |
+| **Repo** | GitHub remote not configured in this checkout |
+| **Status** | Working prototype; final VSIX end-to-end checks remain |
 
 ---
 
@@ -171,3 +177,17 @@
 - VSCode extension activation can be silent — always add visible markers (toast, status bar) during debugging
 - TypeScript strictness in VS Code extensions requires careful null handling
 - Regex-based JS scanning works for a demo but has false positives; a proper JS AST parser would be better next time
+
+---
+
+## 2026-11-06 Review Improvements
+
+- Corrected OWASP Top 10 2021 references for XSS, insecure JWT decoding, weak randomness, and hard-coded credentials.
+- Added a Python finding for fast general-purpose hashes used in password-storage functions. The AI prompt now warns that adopting a password hashing scheme may require dependency and stored-hash migration decisions.
+- Added regression examples for SSRF, path traversal through `os.path.join`, SQL built in one statement and executed through an alias, safe path/host guards, safe `textContent`, password hashing, and context redaction.
+- Hardened AI prompt construction with best-effort redaction of common credential assignments, PEM keys, and URL credentials. Cloud project context now prompts on each request and lists the candidate file paths.
+- Renamed the status-bar indicator to a current-file finding count; it no longer suggests that an A–F letter is a workspace-wide security grade.
+- Ensured the bundled backend passes Electron's `ELECTRON_RUN_AS_NODE` setting to the JavaScript AST sidecar.
+- Updated the README, privacy/performance notes, evaluation corpus, and submission checklist to state the tested scope and unverified release checks.
+- Offline synthetic evaluation: 37 cases, 25/25 expected findings detected, 12/12 clean/negative probes passed; latest scan p95 2.4 ms. This is curated-corpus evidence, not a real-world recall claim.
+- The latest AI model latency/quality and packet-capture privacy checks remain unverified; historical performance results are marked as historical.

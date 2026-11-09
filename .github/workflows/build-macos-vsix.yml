@@ -1,0 +1,51 @@
+name: Build macOS VSIX
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-macos-vsix.yml'
+      - 'backend/**'
+      - 'extension/**'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ matrix.target }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: macos-15-intel
+            target: darwin-x64
+            arch: x64
+          - runner: macos-15
+            target: darwin-arm64
+            arch: arm64
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install extension packaging dependencies
+        run: npm ci --prefix extension
+      - name: Compile VS Code extension
+        run: npm run compile --prefix extension
+      - name: Build native macOS backend and package VSIX
+        env:
+          CODESHIELD_EXPECTED_ARCH: ${{ matrix.arch }}
+        run: |
+          bash backend/build-macos.sh
+          bash extension/package-macos.sh ${{ matrix.target }}
+      - name: Upload macOS VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-coding-assistant-${{ matrix.target }}
+          path: extension/secure-coding-assistant-${{ matrix.target }}-*.vsix
+          if-no-files-found: error

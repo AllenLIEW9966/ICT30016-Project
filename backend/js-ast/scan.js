@@ -47,7 +47,7 @@ const R_CMD = { id: "JS-CMD-001", title: "Potential Command Injection",
   suggestion: "Use a fixed executable and an argument array with shell disabled." };
 const R_XSS = { id: "JS-XSS-001", title: "Potential XSS via innerHTML / document.write",
   severity: "high", confidence: "medium", cwe_id: "CWE-79",
-  owasp_ref: "A07:2021-Identification-and-Authentication-Failures",
+  owasp_ref: "A03:2021-Injection",
   message: "Assigning user-controlled content to innerHTML or document.write may cause XSS.",
   suggestion: "Use textContent for text, or sanitize with DOMPurify before innerHTML." };
 const R_SSRF = { id: "JS-SSRF-001", title: "Potential Server-Side Request Forgery",
@@ -57,12 +57,12 @@ const R_SSRF = { id: "JS-SSRF-001", title: "Potential Server-Side Request Forger
   suggestion: "Allowlist trusted hosts and reject loopback, private, and link-local destinations." };
 const R_RANDOM = { id: "JS-RANDOM-001", title: "Insecure Randomness (Math.random)",
   severity: "medium", confidence: "high", cwe_id: "CWE-338",
-  owasp_ref: "A08:2021-Software-and-Data-Integrity-Failures",
+  owasp_ref: "A02:2021-Cryptographic-Failures",
   message: "Math.random() is not cryptographically secure.",
   suggestion: "Use crypto.getRandomValues() for security-sensitive random values." };
 const R_SECRETS = { id: "JS-SECRETS-001", title: "Potential Hardcoded Secret",
   severity: "high", confidence: "medium", cwe_id: "CWE-798",
-  owasp_ref: "A04:2021-Insecure-Design",
+  owasp_ref: "A07:2021-Identification-and-Authentication-Failures",
   message: "CodeShield detected a possible hard-coded secret. Move the value to an environment variable or secret manager.",
   suggestion: "Load secrets from process.env, a .env file, or a secrets manager." };
 const R_CONFIG = { id: "JS-CONFIG-001", title: "Debugger Statement Present",
@@ -72,7 +72,7 @@ const R_CONFIG = { id: "JS-CONFIG-001", title: "Debugger Statement Present",
   suggestion: "Remove debugger statements or wrap them behind a dev-only flag." };
 const R_JWT = { id: "JS-JWT-001", title: "Potential Insecure JWT Verification",
   severity: "high", confidence: "medium", cwe_id: "CWE-345",
-  owasp_ref: "A10:2021-Server-Side-Request-Forgery-(SSRF)",
+  owasp_ref: "A07:2021-Identification-and-Authentication-Failures",
   message: "JWT decode() does not verify signature. Use verify() with a trusted key.",
   suggestion: "Use jsonwebtoken.verify(token, secretOrPublicKey) or jose.verify()." };
 

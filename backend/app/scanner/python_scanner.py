@@ -136,6 +136,18 @@ class _RuleVisitor(ast.NodeVisitor):
                 self._check(node, rule, self._tree)
         self.generic_visit(node)
 
+    def visit_FunctionDef(self, node: ast.FunctionDef):
+        for rule in PYTHON_RULES:
+            if rule.get("checker") == "function" and rule["matches"](node):
+                self._check(node, rule, self._tree)
+        self.generic_visit(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef):
+        for rule in PYTHON_RULES:
+            if rule.get("checker") == "function" and rule["matches"](node):
+                self._check(node, rule, self._tree)
+        self.generic_visit(node)
+
 
 def scan(source: str, filename: str = "untitled", validate: bool = True) -> list[dict]:
     try:
