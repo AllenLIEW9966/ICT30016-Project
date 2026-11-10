@@ -19,16 +19,22 @@ Static scanning and the workspace context cache run locally. A cloud AI fix send
 
 ## Download and install a VSIX
 
-The repository builds platform-specific VSIX files through GitHub Actions. To download one:
+GitHub Actions builds a separate VSIX for each supported platform. To download one from this public repository:
 
-1. Open the repository's **Actions** tab and select the latest successful **Build Windows VSIX** or **Build macOS VSIX** run.
-2. At the bottom of that run's summary page, download the artifact for your platform:
-   - `secure-coding-assistant-win32-x64` — Windows x64
-   - `secure-coding-assistant-darwin-x64` — macOS Intel
-   - `secure-coding-assistant-darwin-arm64` — macOS Apple Silicon
-3. Extract the downloaded ZIP, then in VS Code open **Extensions** → **…** → **Install from VSIX…** and select the `.vsix` file.
+1. Open the repository's **Actions** tab.
+2. In the left **Workflows** list, select **Build Windows VSIX** or **Build macOS VSIX** for your computer.
+3. In the run list, open the newest run with a green check mark. The run title may be a commit or pull request title rather than the workflow name.
+4. On the run summary page, scroll to **Artifacts** and download the matching item:
 
-Each artifact is available only after its packaging job succeeds. These are CI build artifacts, not permanent releases; if a job fails, inspect its log and rerun it after the issue is fixed. Restart VS Code if prompted after installation.
+   | Artifact | Platform |
+   | --- | --- |
+   | `secure-coding-assistant-win32-x64` | Windows x64 |
+   | `secure-coding-assistant-darwin-x64` | macOS Intel |
+   | `secure-coding-assistant-darwin-arm64` | macOS Apple Silicon |
+
+5. Extract the downloaded ZIP. In VS Code, open **Extensions** → **…** → **Install from VSIX…**, then select the `.vsix` file.
+
+An artifact appears only when its packaging job succeeds. If the run failed or there is no matching artifact, choose another successful run or wait for a successful build. Workflow artifacts are temporary CI downloads and may expire; they are not permanent GitHub Releases or VS Code Marketplace listings. Restart VS Code if prompted after installation.
 
 For development, install the extension dependencies and launch the Extension Development Host:
 
