@@ -1,6 +1,7 @@
 plugins {
     id("org.jetbrains.kotlin.jvm") version "2.2.20"
-    id("org.jetbrains.intellij.platform") version "2.20.1"
+    // The version is provided by the settings plugin in settings.gradle.kts.
+    id("org.jetbrains.intellij.platform")
 }
 
 group = "com.codeshield"
