@@ -1,0 +1,16 @@
+<idea-plugin>
+    <id>com.codeshield.securecoding</id>
+    <name>CodeShield AI</name>
+    <vendor>CodeShield AI</vendor>
+    <description><![CDATA[
+        Scans Python and JavaScript files for selected security issues using the CodeShield backend.
+    ]]></description>
+
+    <depends>com.intellij.modules.platform</depends>
+
+    <extensions defaultExtensionNs="com.intellij">
+        <toolWindow id="CodeShield"
+                    anchor="right"
+                    factoryClass="com.codeshield.intellij.ui.CodeShieldToolWindowFactory"/>
+    </extensions>
+</idea-plugin>
