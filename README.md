@@ -57,6 +57,10 @@ Press **F5** in VS Code to launch the development host. The extension starts its
 
 The Ollama model picker reads installed model tags from the running Ollama service whenever it opens, so newly downloaded models appear automatically. Prepared Qwen 1.5B and CodeLlama 7B choices remain available to download if they are not installed.
 
+## IDE plugin ZIP prototype
+
+A separate early IDE plugin project is in [`zip/`](zip/README.md). Its first milestone scans the active Python or JavaScript file through the existing local backend and lists findings in a CodeShield tool window. A GitHub Actions workflow builds an installable ZIP. It currently requires the backend to be started separately and does not yet provide AI fixes, automatic backend startup, or workspace-wide live scanning. See its README for setup and download instructions.
+
 ## Checks
 
 Run the backend scanner tests:
