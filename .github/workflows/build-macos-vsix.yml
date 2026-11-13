@@ -5,6 +5,13 @@ on:
   push:
     paths:
       - '.github/workflows/build-macos-vsix.yml'
+      - 'README.md'
+      - 'backend/**'
+      - 'extension/**'
+  pull_request:
+    paths:
+      - '.github/workflows/build-macos-vsix.yml'
+      - 'README.md'
       - 'backend/**'
       - 'extension/**'
 

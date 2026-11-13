@@ -89,13 +89,34 @@ def _raises_in_body(node: ast.If) -> bool:
     return any(isinstance(item, ast.Raise) for statement in node.body for item in ast.walk(statement))
 
 
+def _rejects_path_in_body(node: ast.If) -> bool:
+    """Recognize explicit rejection when a path-containment condition fails."""
+    if _raises_in_body(node):
+        return True
+    for statement in node.body:
+        for item in ast.walk(statement):
+            if not isinstance(item, ast.Return) or item.value is None:
+                continue
+            value = item.value
+            # Flask-style `return "Invalid path", 400` is a fail-closed response.
+            if isinstance(value, ast.Tuple) and len(value.elts) >= 2:
+                status = value.elts[1]
+                if isinstance(status, ast.Constant) and isinstance(status.value, int) and 400 <= status.value <= 599:
+                    return True
+            # Also accept frameworks' `return abort(400)` pattern.
+            if isinstance(value, ast.Call) and isinstance(value.func, ast.Name) and value.func.id == "abort":
+                if value.args and isinstance(value.args[0], ast.Constant) and isinstance(value.args[0].value, int) and 400 <= value.args[0].value <= 599:
+                    return True
+    return False
+
+
 def _has_path_containment_guard(node: ast.Call, tree: ast.AST) -> bool:
     function = _enclosing_function(node, tree)
     if function is None or not node.args or not isinstance(node.args[0], ast.Name):
         return False
     path_name = node.args[0].id
     for item in ast.walk(function):
-        if not isinstance(item, ast.If) or not _raises_in_body(item):
+        if not isinstance(item, ast.If) or not _rejects_path_in_body(item):
             continue
         test_calls_commonpath = any(
             isinstance(child, ast.Call) and isinstance(child.func, ast.Attribute) and child.func.attr == "commonpath"

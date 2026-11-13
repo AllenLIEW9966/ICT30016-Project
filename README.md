@@ -4,12 +4,12 @@ CodeShield AI is a VS Code prototype that scans Python and JavaScript documents 
 
 ## Current coverage and limits
 
-- Automatically scans Python and JavaScript files in the workspace after the backend starts, including unopened files. It refreshes findings when supported files are created, changed, or deleted, and scans the active file as it is opened, edited, or saved.
+- Automatically scans Python and JavaScript files plus common dependency manifests (`requirements*.txt`, `pyproject.toml`, and `package.json`) in the workspace after the backend starts, including unopened files. It refreshes findings when supported files are created, changed, or deleted, and scans the active file as it is opened, edited, or saved.
 - Workspace scans are bounded to 2,000 files, skip files larger than 512 KiB, and exclude common generated or dependency folders such as `.git`, `node_modules`, `venv`, `dist`, and `build`. Use **Secure Coding: Scan Python and JavaScript Workspace** to run a manual scan.
 - Python analysis uses the Python AST. JavaScript uses a Babel AST sidecar when available and falls back to pattern scanning if the sidecar cannot start.
-- Rules cover selected issues such as injection, unsafe command execution, XSS sinks, weak cryptography, hardcoded credentials, path traversal, SSRF, unsafe deserialization, and insecure JWT handling. This is not comprehensive SAST and a clean scan does not prove a project is secure.
+- Findings show their selected OWASP Top 10:2025 category and a rule-level OWASP Top 10:2021 crosswalk when a direct mapping applies. A10:2025 is new and has no 2021 category counterpart, so those findings show `N/A` for 2021. The crosswalk does not mean the scanner covers either standard comprehensively. A03 checks common dependency manifests for unbounded package versions and mutable external sources. A06 checks a narrow, high-risk pattern where request data is assigned directly to privilege fields. A08 includes a JavaScript `unserialize()` pattern for unsafe object deserialization; it does not flag ordinary `JSON.parse()`. These checks are partial: they do not query vulnerability databases, audit build pipelines, model business workflows, or prove authorization is correct. Other category checks are pattern-based, not comprehensive coverage. A clean scan does not prove a project is secure.
 - Workspace context is collected locally to help an explicitly requested AI fix. It does not create diagnostics. Related files are selected by simple import/path/configuration relevance and bounded before use; it is not a semantic review of the whole repository.
-- Quick Fix and Fix All use deterministic, context-checked templates where available. AI Fix asks the configured model for a focused patch, validates syntax and scanner findings, and asks before applying. Models can still fail or propose incomplete fixes; review and test every change.
+- Quick Fix and Fix All use deterministic, context-checked templates where available; A03 dependency pins are only applied when an existing lock file supplies an exact version or commit. AI Fix asks the configured model for a focused Python or JavaScript patch, validates syntax and scanner findings, and asks before applying. A06 fixes must follow authorization policy visible in context; the model should decline when it is unclear. Models can still fail or propose incomplete fixes; review and test every change.
 
 ## AI providers and privacy
 
@@ -19,7 +19,9 @@ Static scanning and the workspace context cache run locally. A cloud AI fix send
 
 ## Download and install a VSIX
 
-GitHub Actions builds a separate VSIX for each supported platform. To download one from this public repository:
+The repository includes the current Windows x64 package at [`secure-coding-assistant-0.1.57.vsix`](secure-coding-assistant-0.1.57.vsix). Download it from the repository's **Code** tab, then in VS Code open **Extensions** → **…** → **Install from VSIX…** and select the file.
+
+GitHub Actions also builds platform-specific packages. To download a CI build:
 
 1. Open the repository's **Actions** tab.
 2. In the left **Workflows** list, select **Build Windows VSIX** or **Build macOS VSIX** for your computer.
@@ -34,13 +36,13 @@ GitHub Actions builds a separate VSIX for each supported platform. To download o
 
 5. Extract the downloaded ZIP. In VS Code, open **Extensions** → **…** → **Install from VSIX…**, then select the `.vsix` file.
 
-An artifact appears only when its packaging job succeeds. If the run failed or there is no matching artifact, choose another successful run or wait for a successful build. Workflow artifacts are temporary CI downloads and may expire; they are not permanent GitHub Releases or VS Code Marketplace listings. Restart VS Code if prompted after installation.
+An artifact appears only when its packaging job succeeds. If the run failed or there is no matching artifact, choose another successful run or wait for a successful build. Workflow artifacts are temporary CI downloads and may expire; they are not permanent GitHub Releases or VS Code Marketplace listings. Restart VS Code if prompted after installation. The tracked Windows package is refreshed with source releases; the macOS packages are available from successful Actions runs.
 
 For development, install the extension dependencies and launch the Extension Development Host:
 
 ```powershell
 cd extension
-npm install
+npm ci
 npm run compile
 ```
 
@@ -59,7 +61,7 @@ The Ollama model picker reads installed model tags from the running Ollama servi
 
 ## IDE plugin ZIP prototype
 
-A separate early IDE plugin project is in [`zip/`](zip/README.md). Its first milestone scans the active Python or JavaScript file through the existing local backend and lists findings in a CodeShield tool window. A GitHub Actions workflow builds an installable ZIP. It currently requires the backend to be started separately and does not yet provide AI fixes, automatic backend startup, or workspace-wide live scanning. See its README for setup and download instructions.
+A separate early IDE plugin project is in [`zip/`](zip/README.md). Its first milestone scans the active Python or JavaScript file through the existing local backend and lists findings in a CodeShield tool window. The **Build CodeShield ZIP** GitHub Actions workflow packages it as a downloadable ZIP. It currently requires the backend to be started separately and does not yet provide AI fixes, automatic backend startup, or workspace-wide live scanning. See its README for setup and download instructions.
 
 ## Checks
 

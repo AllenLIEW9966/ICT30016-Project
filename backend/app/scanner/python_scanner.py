@@ -5,7 +5,8 @@ import tokenize
 from dataclasses import dataclass, field, asdict
 from typing import List
 
-from app.scanner.rules.python_rules import PYTHON_RULES
+from app.scanner.rules.python_rules import PYTHON_RULES, _client_controlled_privilege, _request_source_names
+from app.scanner.owasp_mapping import owasp_2021_ref
 
 
 @dataclass
@@ -22,6 +23,7 @@ class Finding:
     end_line: int
     end_column: int
     suggestion: str
+    owasp_2021_ref: str = "N/A"
     code_snippet: str = ""
     context: dict = field(default_factory=dict)
 
@@ -31,7 +33,8 @@ class Finding:
 
 class _RuleVisitor(ast.NodeVisitor):
     def __init__(self, source: str, tree: ast.AST | None = None, validate: bool = True,
-                 tainted_names: set[str] | None = None, url_constants: set[str] | None = None):
+                 tainted_names: set[str] | None = None, url_constants: set[str] | None = None,
+                 request_names: set[str] | None = None):
         # keep source lines so we can grab the exact code snippet later
         self.source = source.splitlines()
         self.findings: List[Finding] = []
@@ -39,6 +42,7 @@ class _RuleVisitor(ast.NodeVisitor):
         self._validate = validate
         self._tainted_names = tainted_names or set()
         self._url_constants = url_constants or set()
+        self._request_names = request_names or set()
 
     def _editor_column(self, line: int, utf8_column: int) -> int:
         """Convert CPython AST UTF-8 byte columns to VS Code UTF-16 columns."""
@@ -83,6 +87,7 @@ class _RuleVisitor(ast.NodeVisitor):
                     getattr(node, "end_col_offset", node.col_offset),
                 ),
                 suggestion=rule["suggestion"],
+                owasp_2021_ref=owasp_2021_ref(rule["id"]),
                 code_snippet=self._snippet(node),
                 context={"validation": reason},
             )
@@ -111,14 +116,20 @@ class _RuleVisitor(ast.NodeVisitor):
     def visit_Assign(self, node: ast.Assign):
         # check assignment-based rules, e.g. hardcoded secrets, weak hash
         for rule in PYTHON_RULES:
-            if rule.get("checker") == "assign" and rule["matches"](node):
+            matched = rule["matches"](node) if rule.get("checker") == "assign" else (
+                _client_controlled_privilege(node, self._request_names) if rule.get("checker") == "design" else False
+            )
+            if matched:
                 self._check(node, rule, self._tree)
         self.generic_visit(node)
 
     def visit_AnnAssign(self, node: ast.AnnAssign):
         if node.value is not None:
             for rule in PYTHON_RULES:
-                if rule.get("checker") == "assign" and rule["matches"](node):
+                matched = rule["matches"](node) if rule.get("checker") == "assign" else (
+                    _client_controlled_privilege(node, self._request_names) if rule.get("checker") == "design" else False
+                )
+                if matched:
                     self._check(node, rule, self._tree)
         self.generic_visit(node)
 
@@ -133,6 +144,12 @@ class _RuleVisitor(ast.NodeVisitor):
         # future-proofing: for-loop rules go here if needed
         for rule in PYTHON_RULES:
             if rule.get("checker") == "for" and rule["matches"](node):
+                self._check(node, rule, self._tree)
+        self.generic_visit(node)
+
+    def visit_ExceptHandler(self, node: ast.ExceptHandler):
+        for rule in PYTHON_RULES:
+            if rule.get("checker") == "except" and rule["matches"](node):
                 self._check(node, rule, self._tree)
         self.generic_visit(node)
 
@@ -162,6 +179,7 @@ def scan(source: str, filename: str = "untitled", validate: bool = True) -> list
                 "confidence": "high",
                 "cwe_id": "N/A",
                 "owasp_ref": "N/A",
+                "owasp_2021_ref": "N/A",
                 "message": f"Could not parse file: {exc.msg} at line {exc.lineno}",
                 "line": exc.lineno or 1,
                 "column": max(0, (exc.offset or 1) - 1),
@@ -178,8 +196,9 @@ def scan(source: str, filename: str = "untitled", validate: bool = True) -> list
     from app.scanner.rules.python_rules import _mark_tainted, _mark_url_constants
     tainted_names = _mark_tainted(tree)
     url_constants = _mark_url_constants(tree)
+    request_names = _request_source_names(tree)
     visitor = _RuleVisitor(source, tree, validate=validate, tainted_names=tainted_names,
-                           url_constants=url_constants)
+                           url_constants=url_constants, request_names=request_names)
     visitor.visit(tree)
     return [f.to_dict() for f in visitor.findings]
 
@@ -226,6 +245,7 @@ def _partial_scan(source: str, filename: str) -> list[dict]:
             findings.append({
                 "rule_id": rule_id, "title": title, "severity": severity,
                 "confidence": "medium", "cwe_id": cwe, "owasp_ref": "N/A",
+                "owasp_2021_ref": "N/A",
                 "message": "Potential security issue found while the file has a syntax error. Review this line after fixing syntax.",
                 "line": line_no,
                 "column": len(lines[line_no - 1][:match.start()].encode("utf-16-le")) // 2,

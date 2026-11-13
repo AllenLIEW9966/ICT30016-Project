@@ -19,7 +19,7 @@ export function normalizeBackendUrl(value: string): string {
 
 /** A1: backend lifecycle manager — bundled exe first, dev server fallback. */
 export class BackendManager {
-  private readonly expectedBackendVersion = '0.1.17';
+  private readonly expectedBackendVersion = '0.1.51';
   private proc: cp.ChildProcess | null = null;
   private out: vscode.OutputChannel;
   private url: string;

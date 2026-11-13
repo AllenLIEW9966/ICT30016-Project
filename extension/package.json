@@ -1,8 +1,8 @@
 {
   "name": "secure-coding-assistant",
   "displayName": "Secure Coding Assistant",
-  "description": "Real-time AI-powered secure coding assistant for Python and JavaScript.",
-  "version": "0.1.37",
+  "description": "Real-time security scanning and AI-assisted fixing for Python, JavaScript, and common dependency manifests.",
+  "version": "0.1.57",
   "publisher": "your-name",
   "repository": {
     "type": "git",
@@ -31,7 +31,7 @@
       },
       {
         "command": "secureCoding.scanWorkspace",
-        "title": "Secure Coding: Scan Python and JavaScript Workspace"
+        "title": "Secure Coding: Scan Workspace Security Findings"
       },
       {
         "command": "secureCoding.fixWithAI",
@@ -70,7 +70,13 @@
         },
         "secureCoding.aiProvider": {
           "type": "string",
-          "enum": ["ollama", "groq", "gemini", "openrouter", "custom"],
+          "enum": [
+            "ollama",
+            "groq",
+            "gemini",
+            "openrouter",
+            "custom"
+          ],
           "default": "ollama",
           "scope": "machine",
           "description": "AI provider. Cloud providers receive code context when you request a fix."

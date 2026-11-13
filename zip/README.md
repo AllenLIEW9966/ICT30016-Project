@@ -39,7 +39,7 @@ python -m uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 ## Build the plugin ZIP
 
-Use JDK 17 or newer and Gradle 9 or newer. From this folder run:
+Use JDK 17 or newer and Gradle 9.0.0 or newer. From this folder run:
 
 ```bash
 gradle buildPlugin
@@ -49,4 +49,4 @@ The distributable ZIP is written under `build/distributions/`. In the target IDE
 
 You can also download the ZIP built by GitHub Actions: open the repository's **Actions** tab, select **Build CodeShield ZIP**, open its latest successful run, and download the `codeshield-zip` artifact. Extract it before installing with **Install Plugin from Disk…**. The CI artifact does not include or start the backend; follow **Run the backend locally** first.
 
-The current build targets the IntelliJ Platform and is intended for testing in IntelliJ IDEA, PyCharm, and WebStorm. Verify each target IDE and OS before distributing the plugin.
+This is an early IDE plugin ZIP prototype. The build creates an installable package, but verify it in each intended IDE and operating system before distributing it. The ZIP does not include or start the CodeShield backend.

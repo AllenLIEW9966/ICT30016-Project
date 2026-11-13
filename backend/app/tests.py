@@ -286,6 +286,34 @@ def test_python_path_traversal_joined_filename():
     assert any(f["rule_id"] == "PY-PATH-001" for f in findings), findings
 
 
+def test_flask_send_file_path_traversal():
+    source = '''import os
+from flask import request, send_file
+BASE_DIR = "/var/www/uploads"
+def download_file():
+    filename = request.args.get("file")
+    file_path = os.path.join(BASE_DIR, filename)
+    return send_file(file_path)
+'''
+    findings = scan(source, "download.py")
+    assert any(f["rule_id"] == "PY-PATH-001" for f in findings), findings
+
+
+def test_python_tls_verification_disabled():
+    findings = scan('import requests\nrequests.get(url, verify=False)\n', "tls.py")
+    assert any(f["rule_id"] == "PY-TLS-001" for f in findings), findings
+
+
+def test_python_sensitive_log_detected():
+    findings = scan('def login(password):\n    logger.info("password=%s", password)\n', "logging.py")
+    assert any(f["rule_id"] == "PY-LOG-001" for f in findings), findings
+
+
+def test_python_empty_except_detected():
+    findings = scan('try:\n    do_work()\nexcept Exception:\n    pass\n', "errors.py")
+    assert any(f["rule_id"] == "PY-EXCEPT-001" for f in findings), findings
+
+
 def test_python_path_allowlist_suppresses_path_finding():
     source = ('import os\ndef read_file(name):\n base=os.path.realpath(BASE_DIR)\n'
               ' path=os.path.realpath(os.path.join(base, name))\n'
@@ -322,6 +350,21 @@ def test_js_safe_text_content_is_not_xss():
     assert not any(f["rule_id"] == "JS-XSS-001" for f in findings), findings
 
 
+def test_js_tls_verification_disabled():
+    findings = js_scanner.scan('const agent = { rejectUnauthorized: false };', "tls.js")
+    assert any(f["rule_id"] == "JS-TLS-001" for f in findings), findings
+
+
+def test_js_sensitive_log_detected():
+    findings = js_scanner.scan('console.info("token", accessToken);', "logging.js")
+    assert any(f["rule_id"] == "JS-LOG-001" for f in findings), findings
+
+
+def test_js_empty_catch_detected():
+    findings = js_scanner.scan('try { run(); } catch (error) {}', "errors.js")
+    assert any(f["rule_id"] == "JS-EXCEPT-001" for f in findings), findings
+
+
 def test_sensitive_context_redaction():
     from app.ai.context import redact_sensitive_text
     source = 'API_KEY = "sk-live-example-secret"\nPASSWORD = os.environ.get("DB_PASSWORD")\n'
@@ -345,10 +388,59 @@ def test_rule_owasp_mappings():
     js_xss = js_scanner.scan('document.getElementById("x").innerHTML = input;\n', "x.js")
     js_jwt = js_scanner.scan('jwt.decode(token);\n', "jwt.js")
     js_random = js_scanner.scan('function createSessionToken(){ return Math.random().toString(36); }\n', "random.js")
-    assert next(f for f in py if f["rule_id"] == "PY-SECRETS-001")["owasp_ref"].startswith("A07:2021-")
-    assert next(f for f in js_xss if f["rule_id"] == "JS-XSS-001")["owasp_ref"] == "A03:2021-Injection"
-    assert next(f for f in js_jwt if f["rule_id"] == "JS-JWT-001")["owasp_ref"].startswith("A07:2021-")
-    assert next(f for f in js_random if f["rule_id"] == "JS-RANDOM-001")["owasp_ref"] == "A02:2021-Cryptographic-Failures"
+    assert next(f for f in py if f["rule_id"] == "PY-SECRETS-001")["owasp_ref"].startswith("A07:2025-")
+    assert next(f for f in js_xss if f["rule_id"] == "JS-XSS-001")["owasp_ref"] == "A05:2025-Injection"
+    assert next(f for f in js_jwt if f["rule_id"] == "JS-JWT-001")["owasp_ref"].startswith("A07:2025-")
+    assert next(f for f in js_random if f["rule_id"] == "JS-RANDOM-001")["owasp_ref"] == "A04:2025-Cryptographic-Failures"
+
+
+def test_a06_python_client_controls_role():
+    findings = scan('def update_user(request, user):\n    user.role = request.json.get("role")\n', "roles.py")
+    result = next(f for f in findings if f["rule_id"] == "PY-DESIGN-001")
+    assert result["owasp_ref"] == "A06:2025-Insecure-Design"
+
+
+def test_a06_python_authenticated_server_role_not_flagged():
+    findings = scan('def update_user(request, user):\n    user.role = request.user.role\n', "roles.py")
+    assert not any(f["rule_id"] == "PY-DESIGN-001" for f in findings), findings
+
+
+def test_a06_javascript_client_controls_admin():
+    findings = js_scanner.scan('user.isAdmin = req.body.isAdmin;\n', "roles.js")
+    result = next(f for f in findings if f["rule_id"] == "JS-DESIGN-001")
+    assert result["owasp_ref"] == "A06:2025-Insecure-Design"
+
+
+def test_a03_unpinned_python_requirements():
+    from app.scanner.dependency_scanner import scan as scan_dependencies
+    findings = scan_dependencies("requests\nflask==3.0.0\n", "requirements.txt")
+    assert len(findings) == 1 and findings[0]["rule_id"] == "DEP-UNPINNED-001", findings
+    assert findings[0]["owasp_ref"].startswith("A03:2025-")
+
+
+def test_a03_wildcard_package_json_dependency():
+    from app.scanner.dependency_scanner import scan as scan_dependencies
+    findings = scan_dependencies('{\n  "dependencies": {\n    "demo": "*"\n  }\n}', "package.json")
+    assert len(findings) == 1 and findings[0]["rule_id"] == "DEP-UNPINNED-001", findings
+
+
+def test_a03_exact_package_json_dependency_is_not_flagged():
+    from app.scanner.dependency_scanner import scan as scan_dependencies
+    findings = scan_dependencies('{"dependencies":{"demo":"1.2.3"}}', "package.json")
+    assert findings == [], findings
+
+
+def test_a03_mutable_python_vcs_dependency_detected():
+    from app.scanner.dependency_scanner import scan as scan_dependencies
+    findings = scan_dependencies("git+https://example.invalid/team/lib.git#main\n", "requirements.txt")
+    assert len(findings) == 1 and findings[0]["rule_id"] == "DEP-SOURCE-001", findings
+
+
+def test_a06_ai_fix_guidance_does_not_invent_authorization_policy():
+    from app.ai.ai_client import _design_fix_guidance
+    guidance = _design_fix_guidance("PY-DESIGN-001")
+    assert "invent a role/ownership policy" in guidance.lower(), guidance
+    assert "return can_fix=false" in guidance.lower(), guidance
 
 
 if __name__ == "__main__":
@@ -381,14 +473,29 @@ if __name__ == "__main__":
         test_o02_template_fallback,
         test_python_ssrf_avatar_parameter,
         test_python_path_traversal_joined_filename,
+        test_flask_send_file_path_traversal,
+        test_python_tls_verification_disabled,
+        test_python_sensitive_log_detected,
+        test_python_empty_except_detected,
         test_python_path_allowlist_suppresses_path_finding,
         test_python_ssrf_allowlist_suppresses_ssrf_finding,
         test_python_password_uses_slow_hash_finding,
         test_js_sql_injection_through_query_alias,
         test_js_safe_text_content_is_not_xss,
+        test_js_tls_verification_disabled,
+        test_js_sensitive_log_detected,
+        test_js_empty_catch_detected,
         test_sensitive_context_redaction,
         test_sensitive_context_redacts_key_blocks_and_url_credentials,
         test_rule_owasp_mappings,
+        test_a06_python_client_controls_role,
+        test_a06_python_authenticated_server_role_not_flagged,
+        test_a06_javascript_client_controls_admin,
+        test_a03_unpinned_python_requirements,
+        test_a03_wildcard_package_json_dependency,
+        test_a03_exact_package_json_dependency_is_not_flagged,
+        test_a03_mutable_python_vcs_dependency_detected,
+        test_a06_ai_fix_guidance_does_not_invent_authorization_policy,
     ]
 
     for test in tests:

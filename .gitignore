@@ -46,11 +46,15 @@ extension/out/
 npm-debug.log*
 
 # Backend build artifacts and local scanner reports
+/build/
+/dist/
 backend/build/
 backend/dist/
 backend/dist-macos/
 backend/eval-results.json
 backend/perf-results.json
+/test.py
+/test.js
 
 # Platform-specific backend binaries are built locally for VSIX packaging
 extension/server/codeshield-backend.exe
@@ -59,6 +63,7 @@ extension/server/codeshield-backend-linux
 
 # Packaged extensions and extracted VSIX metadata
 *.vsix
+!/*.vsix
 vsix-backup/
 /\[Content_Types\].xml
 /extension.vsixmanifest
@@ -67,6 +72,7 @@ vsix-backup/
 *.log
 *.tmp
 *.bak
+.codex-build/
 extension/compile-out.txt
 /fix_ai_fix.py
 
