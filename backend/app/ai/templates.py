@@ -50,10 +50,6 @@ _TEMPLATES: dict[tuple[str, str], dict] = {
         "explanation": "eval() runs arbitrary code. Parse data with a safe parser instead.",
         "secure_code": "import ast, json\nvalue = ast.literal_eval(text)  # or json.loads(text)",
     },
-    ("python", "PY-CODE-EXEC-002"): {
-        "explanation": "exec()/compile() run arbitrary code. Dispatch to explicit handlers instead.",
-        "secure_code": "# replace exec(name) with explicit handler map\nHANDLERS[name]()",
-    },
     ("python", "PY-CRYPTO-001"): {
         "explanation": "MD5 is broken. Use SHA-256 for integrity.",
         "secure_code": "import hashlib\ndigest = hashlib.sha256(data).hexdigest()",

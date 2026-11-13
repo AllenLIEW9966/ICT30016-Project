@@ -22,59 +22,64 @@ function mk(rule, node, sourceLines, filename) {
 
 const R_EVAL = { id: "JS-CODE-EXEC-001", title: "Dangerous eval() Usage",
   severity: "critical", confidence: "high", cwe_id: "CWE-95",
-  owasp_ref: "A03:2021-Injection",
+  owasp_ref: "A05:2025-Injection",
   message: "eval() executes arbitrary code and is a major security risk.",
   suggestion: "Use JSON.parse() for data or avoid dynamic execution entirely." };
 const R_FUNC = { id: "JS-CODE-EXEC-002", title: "Dangerous Function Constructor",
   severity: "critical", confidence: "high", cwe_id: "CWE-94",
-  owasp_ref: "A03:2021-Injection",
+  owasp_ref: "A05:2025-Injection",
   message: "new Function() executes dynamic code and is risky with user input.",
   suggestion: "Use named functions or arrow functions instead." };
 const R_CRYPTO = { id: "JS-CRYPTO-001", title: "Weak Hashing Algorithm (MD5/SHA1)",
   severity: "high", confidence: "high", cwe_id: "CWE-328",
-  owasp_ref: "A02:2021-Cryptographic-Failures",
+  owasp_ref: "A04:2025-Cryptographic-Failures",
   message: "MD5/SHA1 are cryptographically broken or deprecated.",
   suggestion: "Use SHA-256+ via Web Crypto API or a modern library." };
 const R_SQLI = { id: "JS-SQLI-001", title: "Potential SQL Injection",
   severity: "critical", confidence: "medium", cwe_id: "CWE-89",
-  owasp_ref: "A03:2021-Injection",
+  owasp_ref: "A05:2025-Injection",
   message: "SQL query appears built with string concatenation or template literals.",
   suggestion: "Use parameterized queries: db.query('SELECT * FROM t WHERE id=?', [userId])" };
 const R_CMD = { id: "JS-CMD-001", title: "Potential Command Injection",
   severity: "critical", confidence: "high", cwe_id: "CWE-78",
-  owasp_ref: "A03:2021-Injection",
+  owasp_ref: "A05:2025-Injection",
   message: "Dynamic input reaches a shell command. Avoid shell execution and pass validated arguments separately.",
   suggestion: "Use a fixed executable and an argument array with shell disabled." };
 const R_XSS = { id: "JS-XSS-001", title: "Potential XSS via innerHTML / document.write",
   severity: "high", confidence: "medium", cwe_id: "CWE-79",
-  owasp_ref: "A03:2021-Injection",
+  owasp_ref: "A05:2025-Injection",
   message: "Assigning user-controlled content to innerHTML or document.write may cause XSS.",
   suggestion: "Use textContent for text, or sanitize with DOMPurify before innerHTML." };
 const R_SSRF = { id: "JS-SSRF-001", title: "Potential Server-Side Request Forgery",
   severity: "high", confidence: "medium", cwe_id: "CWE-918",
-  owasp_ref: "A10:2021-Server-Side-Request-Forgery-(SSRF)",
+  owasp_ref: "A01:2025-Broken-Access-Control",
   message: "A request URL appears to come from request-controlled data. Validate its scheme, host, and resolved IP before requesting.",
   suggestion: "Allowlist trusted hosts and reject loopback, private, and link-local destinations." };
 const R_RANDOM = { id: "JS-RANDOM-001", title: "Insecure Randomness (Math.random)",
   severity: "medium", confidence: "high", cwe_id: "CWE-338",
-  owasp_ref: "A02:2021-Cryptographic-Failures",
+  owasp_ref: "A04:2025-Cryptographic-Failures",
   message: "Math.random() is not cryptographically secure.",
   suggestion: "Use crypto.getRandomValues() for security-sensitive random values." };
 const R_SECRETS = { id: "JS-SECRETS-001", title: "Potential Hardcoded Secret",
   severity: "high", confidence: "medium", cwe_id: "CWE-798",
-  owasp_ref: "A07:2021-Identification-and-Authentication-Failures",
+  owasp_ref: "A07:2025-Authentication-Failures",
   message: "CodeShield detected a possible hard-coded secret. Move the value to an environment variable or secret manager.",
   suggestion: "Load secrets from process.env, a .env file, or a secrets manager." };
 const R_CONFIG = { id: "JS-CONFIG-001", title: "Debugger Statement Present",
   severity: "low", confidence: "high", cwe_id: "CWE-489",
-  owasp_ref: "A05:2021-Security-Misconfiguration",
+  owasp_ref: "A02:2025-Security-Misconfiguration",
   message: "debugger statements should be removed before production deployment.",
   suggestion: "Remove debugger statements or wrap them behind a dev-only flag." };
 const R_JWT = { id: "JS-JWT-001", title: "Potential Insecure JWT Verification",
   severity: "high", confidence: "medium", cwe_id: "CWE-345",
-  owasp_ref: "A07:2021-Identification-and-Authentication-Failures",
+  owasp_ref: "A07:2025-Authentication-Failures",
   message: "JWT decode() does not verify signature. Use verify() with a trusted key.",
   suggestion: "Use jsonwebtoken.verify(token, secretOrPublicKey) or jose.verify()." };
+const R_SERIAL = { id: "JS-SERIAL-001", title: "Unsafe JavaScript Deserialization",
+  severity: "high", confidence: "medium", cwe_id: "CWE-502",
+  owasp_ref: "A08:2025-Software-or-Data-Integrity-Failures",
+  message: "An unserialize() call may reconstruct executable or unsafe objects from untrusted data.",
+  suggestion: "Avoid unsafe object deserializers for untrusted input. Use a data-only format such as JSON only when it matches the existing data contract, validate its schema, and plan any required data migration." };
 
 function queryText(n) {
   if (!n) return "";
@@ -262,6 +267,11 @@ function scan(code, filename) {
       n.callee.object.type === "Identifier" && n.callee.object.name === "document" &&
       n.callee.property.type === "Identifier" && n.callee.property.name === "write")
       out.push(mk(R_XSS, n, lines, filename));
+    else if (n.type === "CallExpression" &&
+      ((n.callee.type === "Identifier" && n.callee.name === "unserialize") ||
+       (n.callee.type === "MemberExpression" && !n.callee.computed &&
+        n.callee.property.type === "Identifier" && n.callee.property.name === "unserialize")))
+      out.push(mk(R_SERIAL, n, lines, filename));
     else if (n.type === "CallExpression" && n.callee.type === "MemberExpression" &&
       n.callee.object.type === "Identifier" && n.callee.object.name === "Math" &&
       n.callee.property.type === "Identifier" && n.callee.property.name === "random")
@@ -293,6 +303,7 @@ function scanPartial(code, filename) {
     [R_XSS, /\.innerHTML\s*=|document\.write\s*\(/],
     [R_RANDOM, /Math\.random\s*\(/],
     [R_JWT, /jwt\.decode\s*\(/],
+    [R_SERIAL, /\bunserialize\s*\(/],
     [R_CMD, /(?:child_process|cp)\.(?:exec|execSync)\s*\(/],
     [R_CRYPTO, /(?:md5|sha1)\s*\(|createHash\s*\(\s*["'](?:md5|sha1)["']/i],
     [R_SECRETS, /(?:const|let|var)\s+[A-Za-z_$]*?(?:PASSWORD|SECRET|API_KEY|TOKEN|CREDENTIAL)[A-Za-z_$]*\s*=\s*["'][^"']+["']/i],

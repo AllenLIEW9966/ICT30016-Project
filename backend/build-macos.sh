@@ -31,7 +31,7 @@ cp "$SCRIPT_DIR/js-ast/scan.js" "$SCRIPT_DIR/js-ast/worker.js" \
 python3 -m venv "$BUILD_ENV"
 PYTHON="$BUILD_ENV/bin/python"
 "$PYTHON" -m pip install --upgrade pip
-"$PYTHON" -m pip install -r "$BUILD_DIR/requirements.txt" pyinstaller
+"$PYTHON" -m pip install -r "$BUILD_DIR/requirements.txt" pyinstaller==6.22.3
 npm ci --prefix "$BUILD_DIR/js-ast"
 
 cd "$BUILD_DIR"

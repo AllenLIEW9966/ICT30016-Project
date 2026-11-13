@@ -1,16 +1,20 @@
 # CodeShield AI — Secure Coding Assistant
 
-CodeShield AI is a Visual Studio Code extension that scans Python and JavaScript files for selected security patterns and helps developers review possible fixes. It combines local static analysis, deterministic fixes, and optional AI-assisted fixes.
+CodeShield AI is a Visual Studio Code extension that scans Python and JavaScript files and common dependency manifests for selected security patterns and helps developers review possible fixes. It combines local static analysis, deterministic fixes, and optional AI-assisted fixes.
 
 > **Important:** CodeShield AI is a development aid, not a complete security scanner. It can miss vulnerabilities or report patterns that are safe in their context. Review and test every proposed change, and use other security review tools for important software.
 
 ## Features
 
-- Scans supported Python and JavaScript files automatically when the extension starts and as files change.
+- Scans supported Python and JavaScript files and common dependency manifests (`requirements*.txt`, `pyproject.toml`, and `package.json`) automatically when the extension starts and as files change.
 - Reports findings inline and in VS Code’s Problems panel with severity, rule identifiers, and remediation guidance.
-- Covers selected patterns including SQL and command injection, cross-site scripting sinks, hardcoded credentials, weak cryptography, path traversal, server-side request forgery, unsafe deserialization, and insecure JWT handling.
+- Shows a primary OWASP Top 10:2025 category and a rule-specific OWASP Top 10:2021 crosswalk when one directly applies. The new 2025 A10 category has no 2021 counterpart and is labeled N/A for the crosswalk.
+- Covers selected patterns including SQL and command injection, cross-site scripting sinks, hardcoded credentials, weak cryptography, path traversal, server-side request forgery, unsafe deserialization, and insecure JWT handling. JavaScript A08 detection flags `unserialize()` calls; ordinary `JSON.parse()` is not treated as unsafe deserialization.
+- Includes partial OWASP 2025 checks for dependency declarations (A03) and direct assignment of request data to privileged fields (A06).
 - Offers deterministic **Quick Fix** actions for supported rules and **Fix All** for supported deterministic fixes in the active file.
+- For A03, Quick Fix and Fix All only pin from an existing lock file; they never guess a package version or commit. Without a matching lock entry, review the dependency and select a trusted pin manually.
 - Offers **AI Fix** for a focused finding using a configured local or cloud model. The proposal is syntax-checked and rescanned before the extension asks whether to apply it.
+- AI Fix supports A06 in Python and JavaScript, with instructions to use only authorization policy evident in the supplied context and to decline when the policy is unclear. AI Fix does not edit dependency manifests.
 - Adds a short “Why” comment to AI fixes where it can do so safely.
 - Labels whether a proposal came from the selected model, the built-in CodeShield fallback, or an unverified source. Fallback messages include the available reason.
 - Caches relevant workspace context locally to help an explicitly requested AI fix match the surrounding project. This context cache does not create findings.
@@ -18,23 +22,23 @@ CodeShield AI is a Visual Studio Code extension that scans Python and JavaScript
 ## Requirements
 
 - Visual Studio Code 1.85 or later.
-- The packaged release currently targets **Windows x64**. The bundled backend executable is not provided for macOS or Linux.
+- GitHub Actions builds are available for **Windows x64**, **macOS Intel**, and **macOS Apple Silicon**. Linux packaging is not currently offered. A target artifact is usable only after its workflow run succeeds.
 - An AI provider is optional for scanning and deterministic fixes. To use AI Fix, configure a provider and a model that can be reached from your computer.
 
 ## Install from a VSIX
 
-1. Download or locate `secure-coding-assistant-0.1.37.vsix`.
+1. Download or locate the VSIX matching the extension version shown in `package.json`.
 2. In VS Code, open **Extensions**.
 3. Open the Extensions view’s **…** menu and choose **Install from VSIX…**.
 4. Select the VSIX and reload VS Code if prompted.
 
-The packaged extension starts its bundled backend automatically. No manual terminal or PowerShell setup is required for the packaged Windows build.
+The packaged extension starts its bundled backend automatically. No manual terminal setup is required for supported packaged builds.
 
 ## Getting started
 
 1. Open a workspace containing Python or JavaScript files.
 2. CodeShield AI starts its local backend and scans supported workspace files automatically. Findings appear inline and in **View → Problems**.
-3. To run a scan again manually, open the Command Palette with **Ctrl+Shift+P** and choose **Secure Coding: Scan Python and JavaScript Workspace**. To scan just the active file, choose **Secure Coding: Scan Current File**.
+3. To run a scan again manually, open the Command Palette with **Ctrl+Shift+P** and choose **Secure Coding: Scan Workspace Security Findings**. To scan just the active supported file, choose **Secure Coding: Scan Current File**.
 4. Place the cursor on a CodeShield finding and open **Quick Fix** with **Ctrl+.** to see available actions.
 5. Review a fix before accepting it. AI Fix shows a preview and confirmation before changing the file.
 
@@ -60,15 +64,15 @@ Keep the Ollama application or service running. Open **Secure Coding: Configure 
 
 ## Choosing a fix action
 
-- **Quick Fix** applies a supported, context-checked CodeShield template for the selected finding. It is fast and does not require an AI provider.
-- **Fix All** applies supported deterministic templates to findings in the active file. Findings without a safe supported template remain for review.
-- **AI Fix** asks the selected model for a focused replacement. CodeShield validates the candidate’s syntax and checks whether its scanner still reports the selected finding, then offers a diff and asks before applying.
+- **Quick Fix** applies a supported, context-checked CodeShield template for the selected finding, or pins an A03 dependency using the exact value in a nearby lock file. It is fast and does not require an AI provider.
+- **Fix All** applies supported deterministic templates and lockfile-backed dependency pins in the active file. Findings without a safe supported fix remain for review.
+- **AI Fix** asks the selected model for a focused Python or JavaScript replacement. CodeShield validates syntax and checks whether its scanner still reports the selected finding, then offers a diff and asks before applying. For A06, the model must use authorization policy present in context or decline; it must not invent one.
 
 AI models can return incomplete, unsafe, or invalid code. A model may also decline or fail to produce a usable patch. When a context-checked built-in template is available, CodeShield may offer it as a fallback. The confirmation identifies the fallback and gives the available reason; that patch is not model-generated. If the backend does not report the source, the confirmation labels it unverified. Review the complete diff and run the project’s own checks before relying on any fix.
 
 ## Scan scope and limitations
 
-- Automatic workspace scanning is limited to Python and JavaScript files, and is bounded to 2,000 files. Individual files larger than 512 KiB are skipped.
+- Automatic workspace scanning includes Python and JavaScript source files plus `requirements*.txt`, `pyproject.toml`, and `package.json`. It is bounded to 2,000 files. Individual files larger than 512 KiB are skipped.
 - Common generated and dependency directories are excluded, including `.git`, `node_modules`, `venv`, `dist`, and `build`.
 - Python analysis uses the Python AST. JavaScript uses a Babel AST sidecar when available and falls back to pattern scanning if the sidecar cannot start.
 - Rules cover selected patterns; this is not comprehensive static application security testing. A clean result does not prove that code is secure.
@@ -90,7 +94,7 @@ Open the Command Palette with **Ctrl+Shift+P** and search for:
 | Command | Purpose |
 | --- | --- |
 | **Secure Coding: Scan Current File** | Scan the active supported file. |
-| **Secure Coding: Scan Python and JavaScript Workspace** | Scan supported files in the workspace. |
+| **Secure Coding: Scan Workspace Security Findings** | Scan supported source files and dependency manifests in the workspace. |
 | **Secure Coding: Fix with AI** | Choose a finding and request a focused AI fix. |
 | **Secure Coding: Fix All Vulnerabilities in File** | Apply available deterministic fixes in the active file. |
 | **Secure Coding: Show Current File Findings** | Show the current file’s finding count. |
