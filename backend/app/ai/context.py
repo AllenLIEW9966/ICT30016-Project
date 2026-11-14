@@ -1,14 +1,13 @@
 """O-02 context bounding + prompt harness.
 
-extract_context(): bounded window around the finding line, capped so
-local 7B quantized models stay in context and under NFR-01 latency.
+extract_context(): complete lines around the finding, without cutting code
+mid-line. The default window includes 20 lines on each side.
 """
 from __future__ import annotations
 
 import re
 
-MAX_CONTEXT_LINES = 40
-MAX_SNIPPET_CHARS = 2000
+MAX_CONTEXT_LINES = 41
 
 _SECRET_ASSIGNMENT = re.compile(
     r"(?i)(\b[A-Z0-9_.-]*(?:PASSWORD|PASSWD|SECRET|API[_-]?KEY|TOKEN|CREDENTIAL|PRIVATE[_-]?KEY|ACCESS[_-]?KEY)[A-Z0-9_.-]*\b\s*[:=]\s*)"
@@ -41,16 +40,14 @@ def extract_context(
     source: str,
     line: int,
     end_line: int | None = None,
-    window: int = 15,
+    window: int = 20,
 ) -> dict:
     lines = source.splitlines()
     total = len(lines)
-    end = end_line or line
+    line = max(1, min(total or 1, line))
     start = max(1, line - window)
-    stop = min(total, end + window)
+    stop = min(total, line + window)
     snippet = "\n".join(lines[start - 1 : stop])
-    if len(snippet) > MAX_SNIPPET_CHARS:
-        snippet = snippet[:MAX_SNIPPET_CHARS] + "\n# ... (truncated)"
     return {
         "start_line": start,
         "end_line": stop,

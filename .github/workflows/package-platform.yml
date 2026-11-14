@@ -38,7 +38,7 @@ jobs:
         working-directory: backend
         run: python app/tests.py
       - name: Advisory publication tests
-        run: node --test extension/test/advisoryUpdate.test.cjs
+        run: node --test extension/test/advisoryUpdate.test.cjs extension/test/aiContext.test.cjs extension/test/patchSyntax.test.cjs extension/test/pythonImports.test.cjs
       - name: Build native backend, verify ZIP startup and package VSIX
         run: python scripts/package_release.py ${{ inputs.target }}
       - name: Upload VSIX

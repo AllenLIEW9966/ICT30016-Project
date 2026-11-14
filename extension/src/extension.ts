@@ -1,6 +1,8 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
 import { publishCurrentAdvisories } from './advisoryUpdate';
+import { aiSourceWindow } from './aiContext';
+import { bcryptImportInsertion } from './pythonImports';
 import { BackendManager, normalizeBackendUrl } from './backendManager';
 
 type Finding = {
@@ -981,7 +983,7 @@ export function activate(context: vscode.ExtensionContext) {
             a.diagnostics = [d];
             a.isPreferred = true;
             a.edit = new vscode.WorkspaceEdit();
-            a.edit.replace(document.uri, replacementRange, indentReplacement(document, replacementRange, template));
+            addDeterministicReplacement(a.edit, document, replacementRange, template);
             actions.push(a);
           }
           // AI fix via backend (O-02 bounded context)
@@ -1586,7 +1588,6 @@ async function fixAllFile(
     return;
   }
 
-  const edit = new vscode.WorkspaceEdit();
   // VS Code applies original-coordinate edits atomically. Reject overlaps so one
   // finding can never overwrite another finding's replacement.
   const ordered = [...replacements].sort((a, b) => a.sl - b.sl || a.sc - b.sc || a.el - b.el || a.ec - b.ec);
@@ -1600,24 +1601,25 @@ async function fixAllFile(
   }
 
   const skippedCount = uniqueFindings.length - ordered.length;
-  const proceed = await vscode.window.showInformationMessage(
-    `Fix All will apply ${ordered.length} supported rule-based or lockfile-backed fix(es) and leave ${skippedCount} finding(s) unchanged. Use individual AI Fix where supported; dependency findings without an exact lockfile pin require manual review. Continue?`,
-    { modal: true },
-    'Apply Fixes',
+  const proceed = await vscode.window.showWarningMessage(
+    `Are you sure you want to fix all ${ordered.length} issues in this file?`,
+    { modal: true, detail: `${ordered.length} supported rule-based or lockfile-backed fix(es) will be applied. ${skippedCount} finding(s) require individual AI or manual review.` },
+    'Confirm',
   );
-  if (proceed !== 'Apply Fixes') return;
+  if (proceed !== 'Confirm') return;
   if (document.version !== sourceVersion || findingVersionsByUri.get(uriKey) !== sourceVersion) {
     vscode.window.showWarningMessage('The file changed while Fix All was awaiting confirmation. No edits were applied; scan again.');
     await rescan();
     return;
   }
 
+  const edit = new vscode.WorkspaceEdit();
   for (const r of ordered) {
     const range = new vscode.Range(
       new vscode.Position(r.sl, r.sc),
       new vscode.Position(r.el, r.ec),
     );
-    edit.replace(document.uri, range, indentReplacement(document, range, r.text));
+    addDeterministicReplacement(edit, document, range, r.text);
   }
 
   const applied = await vscode.workspace.applyEdit(edit);
@@ -1653,7 +1655,7 @@ async function applyTemplateFix(
   }
 
   const edit = new vscode.WorkspaceEdit();
-  edit.replace(document.uri, range, indentReplacement(document, range, template));
+  addDeterministicReplacement(edit, document, range, template);
   const applied = await vscode.workspace.applyEdit(edit);
   if (applied) {
     const fileName = document.uri.path.split(/[\\/]/).pop() || document.uri.toString();
@@ -1667,6 +1669,22 @@ async function applyTemplateFix(
 }
 
 export function deactivate() {}
+
+function addDeterministicReplacement(edit: vscode.WorkspaceEdit, document: vscode.TextDocument, range: vscode.Range, replacement: string): void {
+  let text = indentReplacement(document, range, replacement);
+  if (document.languageId === 'python') {
+    const eol = document.eol === vscode.EndOfLine.CRLF ? '\r\n' : '\n';
+    const planned = edit.get(document.uri).map(item => item.newText).join('\n');
+    const insertion = /^import\s+bcrypt\s*$/m.test(planned)
+      ? undefined : bcryptImportInsertion(document.getText(), text, eol);
+    if (insertion && insertion.offset <= document.getText().length) {
+      const position = document.positionAt(insertion.offset);
+      if (position.isEqual(range.start)) text = insertion.text + text;
+      else edit.insert(document.uri, position, insertion.text);
+    }
+  }
+  edit.replace(document.uri, range, text);
+}
 
 // FR-04 helpers: instant rule-based templates + shared AI-apply flow
 function templateFix(languageId: string, message: string, ruleId: string, codeSnippet: string, fullSource = ''): string | null {
@@ -2106,7 +2124,7 @@ async function applyAiFix(
       end_line: range.end.line + 1,
       start_column: range.start.character,
       end_column: range.end.character,
-      full_source: originalSource,
+      ...aiSourceWindow(originalSource, line),
       related_project_files: relatedProjectFiles,
       validation_feedback: undefined as string | undefined,
     },
@@ -2217,14 +2235,7 @@ async function applyAiFix(
           }
         }
         if (validation.syntaxError) {
-          const previewChoice = await vscode.window.showWarningMessage(
-            `The AI proposal has a syntax issue: ${validation.syntaxError} It cannot be applied, but you can inspect the candidate.`,
-            { modal: true },
-            'Preview Candidate',
-          );
-          if (previewChoice !== 'Preview Candidate') return;
-          const invalidPreview = await vscode.workspace.openTextDocument({ language: document.languageId, content: previewSource });
-          await vscode.commands.executeCommand('vscode.diff', document.uri, invalidPreview.uri, `AI Candidate (syntax review): ${finding.title}`);
+          await vscode.window.showErrorMessage('AI 返回的修复代码存在语法错误，已自动拦截');
           return;
         }
         const scannerReview = [validation.findingRemains, ...(validation.newFindings || [])]
@@ -2317,11 +2328,14 @@ async function validateAiPreview(
   const response = await fetch(`${backendUrl}/scan`, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({ language: languageId, code, filename }),
+    body: JSON.stringify({ language: languageId, code, filename, require_ast: true }),
   });
   if (!response.ok) throw new Error(`Could not validate the AI patch (HTTP ${response.status})`);
-  const result = await response.json() as { findings?: { rule_id?: string; message?: string; severity?: string }[] };
-  const findings = result.findings || [];
+  const result = await response.json() as { ast_validated?: boolean; findings?: { rule_id?: string; message?: string; severity?: string }[] };
+  if (result.ast_validated !== true || !Array.isArray(result.findings)) {
+    throw new Error('AST syntax validation could not be confirmed. AI patch blocked. Rebuild or restart the backend.');
+  }
+  const findings = result.findings;
   const parseFinding = findings.find((finding) => finding.rule_id === 'PARSE-ERROR');
   if (parseFinding) {
     return { syntaxError: `The patch would leave invalid ${languageId} syntax (${parseFinding.message || 'parse error'}).` };

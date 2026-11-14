@@ -2,7 +2,7 @@
 
 CodeShield AI is a VS Code prototype that scans Python and JavaScript documents for selected security patterns, explains findings with CWE and OWASP references, and offers rule-based or AI-assisted fixes.
 
-The current Windows release is **0.1.60**. Start with the [project evaluation report](EVALUATION_REPORT.md) for architecture, selected OWASP checks and verification evidence. The [presentation outline](PRESENTATION_OUTLINE.md) follows the supplied 12-slide deck and includes speaking notes, timing and recording steps.
+The current Windows release is **0.1.61**. Start with the [project evaluation report](EVALUATION_REPORT.md) for architecture, selected OWASP checks and verification evidence. The [presentation outline](PRESENTATION_OUTLINE.md) follows the supplied 12-slide deck and includes speaking notes, timing and recording steps.
 
 ## Core features
 
@@ -36,7 +36,7 @@ Static scanning and the workspace context cache run locally. A cloud AI fix send
 
 ## Download and install a VSIX
 
-The current source version is **0.1.60**. Download a platform-specific VSIX from a successful GitHub Actions run. Generated installers are ignored by Git and distributed through Actions Artifacts.
+The current source version is **0.1.61**. Download a platform-specific VSIX from a successful GitHub Actions run. Generated installers are ignored by Git and distributed through Actions Artifacts.
 
 GitHub Actions builds each package on its native operating system. To download a CI build, sign in to GitHub and follow these steps:
 
@@ -110,7 +110,7 @@ TARGET=darwin-arm64  # darwin-x64 on Intel Mac, linux-x64 on Linux x64
 python scripts/package_release.py "$TARGET"
 ```
 
-For each target, the script writes `dist/<target>/secure-coding-assistant-<target>-0.1.60.vsix` and `dist/<target>/codeshield-backend-<target>.zip`. The backend ZIP contains the original executable name shown above. The existing PyInstaller spec produces one executable with collected Python libraries, native libraries and JavaScript analyzer assets embedded inside it. Required system libraries remain platform prerequisites. The build extracts the ZIP, checks backend startup and `/health` version, then checks the VSIX contains the intended backend and manifest version.
+For each target, the script writes `dist/<target>/secure-coding-assistant-<target>-0.1.61.vsix` and `dist/<target>/codeshield-backend-<target>.zip`. The backend ZIP contains the original executable name shown above. The existing PyInstaller spec produces one executable with collected Python libraries, native libraries and JavaScript analyzer assets embedded inside it. Required system libraries remain platform prerequisites. The build extracts the ZIP, checks backend startup and `/health` version, then checks the VSIX contains the intended backend and manifest version.
 
 Each workflow uploads two separate artifacts, `secure-coding-assistant-<target>` and `codeshield-backend-<target>`. GitHub wraps downloaded artifacts in a ZIP. Extract that outer ZIP to get the VSIX installer or the backend ZIP. The backend ZIP is a standalone service distribution. The separate `codeshield-zip` artifact from **Build CodeShield ZIP** is the IDE plugin prototype.
 
@@ -118,7 +118,7 @@ For a standalone backend, extract its ZIP and run `codeshield-backend.exe --host
 
 ## Four-step presentation demo
 
-Use a separate trusted workspace with synthetic fixtures. Install Windows 0.1.60 and wait for the backend to start. Open **View → Output** to access **CodeShield** for backend messages and **CodeShield Workspace Scan** for OSV request/publication logs. Do not install the intentionally old Django version used below. The scanner reads its manifest declaration.
+Use a separate trusted workspace with synthetic fixtures. Install Windows 0.1.61 and wait for the backend to start. Open **View → Output** to access **CodeShield** for backend messages and **CodeShield Workspace Scan** for OSV request/publication logs. Do not install the intentionally old Django version used below. The scanner reads its manifest declaration.
 
 ### 1. Scan local code and explain A05
 
@@ -161,7 +161,7 @@ Wait for the asynchronous advisory response. Show `CS-A03-OSV` and CVE reference
 
 ### 4. Explain evidence and limits
 
-Show the recorded **53/53 backend checks**, **3/3 asynchronous publication tests**, and successful packaged-backend/VS Code OSV verification. Present the **25 expected detections and 12 negative probes** as a separate small synthetic corpus.
+Show the recorded **55/55 backend checks**, **15/15 frontend tests**, and successful packaged-backend/VS Code OSV verification. Present the **25 expected detections and 12 negative probes** as a separate small synthetic corpus.
 
 Explain that local scanning analyzes files individually, the AI context cache supplies selected excerpts for a requested fix, and the tools cover selected vulnerability patterns. OSV failures preserve offline findings. A clean scan does not prove security, and a dependency upgrade needs compatibility testing. Network and stale-response failures were covered with controlled tests. Show a failure as a live or recorded demo only if that behavior was actually exercised.
 

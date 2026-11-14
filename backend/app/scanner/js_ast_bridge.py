@@ -71,10 +71,10 @@ def _start_worker() -> subprocess.Popen | None:
         return None
 
 
-def _oneshot(source: str, filename: str, scan_js: Path | None = None) -> list[dict] | None:
+def _oneshot(source: str, filename: str, scan_js: Path | None = None, strict_syntax: bool = False) -> list[dict] | None:
     if scan_js is None:
         scan_js, _ = _sidecar_paths()
-    payload = json.dumps({"code": source, "filename": filename})
+    payload = json.dumps({"code": source, "filename": filename, "strict_syntax": strict_syntax})
     try:
         proc = subprocess.run(
             [_node_bin(), str(scan_js)],
@@ -91,7 +91,7 @@ def _oneshot(source: str, filename: str, scan_js: Path | None = None) -> list[di
         data = json.loads(proc.stdout)
     except json.JSONDecodeError:
         return None
-    findings = data.get("findings")
+    findings = None if data.get("error") else data.get("findings")
     return findings if isinstance(findings, list) else None
 
 
@@ -105,7 +105,7 @@ def _read_exact(stream, n: int) -> bytes:
     return buf
 
 
-def scan_with_ast(source: str, filename: str = "untitled") -> list[dict] | None:
+def scan_with_ast(source: str, filename: str = "untitled", strict_syntax: bool = False) -> list[dict] | None:
     """Persistent-worker first, one-shot spawn fallback, None -> regex."""
     scan_js, _ = _sidecar_paths()
     if not scan_js.exists():
@@ -114,13 +114,13 @@ def scan_with_ast(source: str, filename: str = "untitled") -> list[dict] | None:
         proc = _start_worker()
         if proc is not None and proc.stdin and proc.stdout:
             try:
-                payload = json.dumps({"code": source, "filename": filename}).encode()
+                payload = json.dumps({"code": source, "filename": filename, "strict_syntax": strict_syntax}).encode()
                 proc.stdin.write(struct.pack(">I", len(payload)) + payload)
                 proc.stdin.flush()
                 (resp_len,) = struct.unpack(">I", _read_exact(proc.stdout, 4))
                 raw = _read_exact(proc.stdout, resp_len)
                 data = json.loads(raw.decode())
-                findings = data.get("findings")
+                findings = None if data.get("error") else data.get("findings")
                 if isinstance(findings, list):
                     return findings
             except Exception:
@@ -130,5 +130,5 @@ def scan_with_ast(source: str, filename: str = "untitled") -> list[dict] | None:
                 except Exception:
                     pass
                 _proc = None
-        return _oneshot(source, filename, scan_js)
+        return _oneshot(source, filename, scan_js, strict_syntax)
 

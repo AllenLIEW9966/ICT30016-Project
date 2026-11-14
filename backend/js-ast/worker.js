@@ -15,7 +15,7 @@ process.stdin.on("data", (chunk) => {
     let out;
     try {
       const req = JSON.parse(payload || "{}");
-      out = scan(String(req.code || ""), String(req.filename || "untitled"));
+      out = scan(String(req.code || ""), String(req.filename || "untitled"), req.strict_syntax === true);
     } catch (e) {
       out = { findings: [], error: String((e && e.message) || e) };
     }

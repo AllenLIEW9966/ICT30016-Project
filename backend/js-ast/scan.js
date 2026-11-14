@@ -195,13 +195,13 @@ function walk(node, cb) {
   }
 }
 
-function scan(code, filename) {
+function scan(code, filename, strictSyntax = false) {
   const lines = code.split("\n");
   let ast;
   try {
     ast = parser.parse(code, { sourceType: "unambiguous",
-      allowImportExportEverywhere: true, allowReturnOutsideFunction: true,
-      plugins: ["jsx", "typescript"] });
+      allowImportExportEverywhere: !strictSyntax, allowReturnOutsideFunction: !strictSyntax,
+      plugins: strictSyntax ? ["jsx"] : ["jsx", "typescript"] });
   } catch (e) {
     const ln = (e.loc && e.loc.line) || 1;
     const cl = (e.loc && e.loc.column) || 0;
@@ -366,7 +366,7 @@ process.stdin.on("data", function (c) { input += c; });
 process.stdin.on("end", function () {
   try {
     const req = JSON.parse(input || "{}");
-    const res = scan(String(req.code || ""), String(req.filename || "untitled"));
+    const res = scan(String(req.code || ""), String(req.filename || "untitled"), req.strict_syntax === true);
     process.stdout.write(JSON.stringify(res));
   } catch (e) {
     process.stdout.write(JSON.stringify({ findings: [], error: String(e) }));

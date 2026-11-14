@@ -1,6 +1,6 @@
 # CodeShield AI — Project Evaluation Report
 
-Evaluated release: Windows x64 0.1.60. Implementation baseline: commit `56b2950`. Documentation prepared on 14 November 2026.
+Evaluated release: Windows x64 0.1.61. P1 baseline: commit `56b2950`; 0.1.61 adds the safety checks below. Documentation prepared on 14 November 2026.
 
 CodeShield AI is a functional VS Code prototype for selected Python, JavaScript and dependency-manifest security checks. P1 adds optional online dependency advisories to the existing local scanning and requested AI remediation workflows.
 
@@ -72,17 +72,24 @@ Rules also carry explicit 2021 crosswalks where appropriate. OSV's A03:2025 rule
 
 | Check | Recorded result | What it establishes |
 |---|---|---|
-| Backend regression runner | **53/53 passed** | Registered regression cases including OSV HTTP 500 and timeout fallback, fixtures and existing scanner checks |
-| Frontend asynchronous publication tests | **3/3 passed** | Unchanged buffers accept results, edited buffers reject delayed results, newer scans win during disk checks |
+| Backend regression runner | **55/55 passed** | Registered regression cases including OSV HTTP 500 and timeout fallback, fixtures and existing scanner checks |
+| Frontend tests | **15/15 passed** | Three async publication checks, three AI source-window checks, three patch-syntax gate checks, and six Python import checks |
 | TypeScript build | Passed | Extension source compiles |
 | Curated synthetic scanner corpus | **25/25 expected detections and 12/12 negative probes passed** | Behavior on 37 small selected examples |
-| Packaged windowless backend | `/health` returned HTTP 200 and version 0.1.60 | Fresh Windows executable starts without a console after the stream fallback fix |
+| Packaged windowless backend | `/health` returned HTTP 200 and version 0.1.61 | Fresh Windows executable starts without a console after the stream fallback fix |
 | Packaged advisory API | `django==3.2.1` returned HTTP 200 with an advisory finding and CVE aliases | Live backend-to-OSV lookup worked during the check |
 | VS Code Extension Development Host | Passed using the extracted 0.1.60 package and isolated profile | `CS-A03-OSV` appeared on the expected `requirements.txt` URI and dependency line |
 
-The 53 regression checks and the 37 corpus cases are separate suites with overlapping behavior. They must not be added together as independent vulnerability samples. The corpus is small and synthetic. These results do not measure broad real-world recall, per-category coverage or the success rate of all AI models. The latest P1 editor test covers OSV diagnostic publication. It does not retest every cloud provider, every fix action or macOS installation.
+The 55 regression checks and the 37 corpus cases are separate suites with overlapping behavior. They must not be added together as independent vulnerability samples. The corpus is small and synthetic. These results do not measure broad real-world recall, per-category coverage or the success rate of all AI models. The latest P1 editor test covers OSV diagnostic publication. It does not retest every cloud provider, every fix action or macOS installation.
 
 Detailed evidence is in [OSV verification](extension/test/OSV-VERIFICATION.md), the [regression runner](backend/app/tests.py), [OSV mock tests](backend/app/test_osv.py), [frontend race tests](extension/test/advisoryUpdate.test.cjs) and [evaluation runner](backend/app/evaluate.py).
+
+## Safety changes in 0.1.61
+
+- Fix All uses a native modal warning and requires **Confirm** before applying its atomic WorkspaceEdit. File changes during the wait invalidate the prepared edits. An isolated VS Code Development Host verified cancel, confirm and stale-document scenarios using simulated dialog responses.
+- AI Fix sends the current file window of up to 20 lines before and 20 lines after the finding, with original line coordinates. The backend adds line-number labels without cutting source lines. Separately approved related project context retains its existing bounds.
+- Candidate validation parses the complete proposed file. Python uses ast.parse followed by compile without execution. JavaScript uses strict @babel/parser settings. Syntax-invalid candidates cannot open a diff or be applied. Parser unavailability, malformed validation responses and an older backend without AST confirmation block the operation. Unit tests verify the blocked preview and editor APIs using mocked interfaces.
+- Deterministic Python edits can insert a missing import bcrypt when the generated replacement needs that module. The insertion preserves existing imports, headers, docstrings, future imports and line endings, and is deduplicated across a batch. Four synthetic real WorkspaceEdit scenarios passed in the development host. This does not install bcrypt or introduce a new deterministic MD5-to-bcrypt migration.
 
 ## Privacy, benefits and risks
 

@@ -2,7 +2,7 @@
   "name": "secure-coding-assistant",
   "displayName": "Secure Coding Assistant",
   "description": "Real-time security scanning and AI-assisted fixing for Python, JavaScript, and common dependency manifests.",
-  "version": "0.1.60",
+  "version": "0.1.61",
   "publisher": "your-name",
   "repository": {
     "type": "git",
