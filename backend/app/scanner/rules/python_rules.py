@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import ast
+import re
 
 PYTHON_RULES: list[dict] = []
 
@@ -143,6 +144,38 @@ def _tls_verification_disabled(node: ast.Call) -> bool:
     )
 
 
+def _flask_debug_enabled(node: ast.Call) -> bool:
+    """Catch Flask's common app.run(debug=True) production misconfiguration."""
+    return (
+        isinstance(node.func, ast.Attribute)
+        and node.func.attr == "run"
+        and any(
+            keyword.arg == "debug"
+            and isinstance(keyword.value, ast.Constant)
+            and keyword.value.value is True
+            for keyword in node.keywords
+        )
+    )
+
+
+def _permissive_cors(node: ast.Call) -> bool:
+    """Flag wildcard CORS combined with credentialed requests."""
+    function = node.func
+    is_cors = (
+        isinstance(function, ast.Name) and function.id.lower() in {"cors", "cross_origin"}
+    ) or (
+        isinstance(function, ast.Attribute) and function.attr.lower() in {"cors", "cross_origin"}
+    )
+    if not is_cors:
+        return False
+    values = {keyword.arg: keyword.value for keyword in node.keywords}
+    origin = values.get("origins") or values.get("origin")
+    credentials = values.get("supports_credentials") or values.get("allow_credentials")
+    wildcard = isinstance(origin, ast.Constant) and origin.value == "*"
+    credentialed = isinstance(credentials, ast.Constant) and credentials.value is True
+    return wildcard and credentialed
+
+
 def _sensitive_value_logged(node: ast.Call) -> bool:
     """Flag obvious secret-named values passed directly to common log APIs."""
     method = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
@@ -161,9 +194,42 @@ def _sensitive_value_logged(node: ast.Call) -> bool:
     return False
 
 
+def _untrusted_value_logged(node: ast.Call, request_names: set[str]) -> bool:
+    """Flag request-derived values sent directly to logs (possible CWE-117)."""
+    method = node.func.attr if isinstance(node.func, ast.Attribute) else getattr(node.func, "id", "")
+    if method not in {"debug", "info", "warning", "error", "exception", "critical", "print"}:
+        return False
+    for argument in node.args:
+        if any(
+            isinstance(child, ast.Name) and child.id in request_names
+            or isinstance(child, ast.Attribute)
+            and child.attr.lower() in {"args", "form", "json", "data", "query", "params", "body", "headers"}
+            and any(isinstance(descendant, ast.Name) and descendant.id == "request" for descendant in ast.walk(child))
+            for child in ast.walk(argument)
+        ):
+            return True
+    return False
+
+
 def _empty_exception_handler(node: ast.ExceptHandler) -> bool:
     """Flag exception handlers that silently discard errors (A10)."""
     return len(node.body) == 1 and isinstance(node.body[0], ast.Pass)
+
+
+def _exception_swallowed_as_success(node: ast.ExceptHandler) -> bool:
+    """Catch common broad-exception handlers that return success-like defaults."""
+    if node.type is not None and not (
+        isinstance(node.type, ast.Name) and node.type.id in {"Exception", "BaseException"}
+    ):
+        return False
+    if len(node.body) != 1 or not isinstance(node.body[0], ast.Return):
+        return False
+    value = node.body[0].value
+    if value is None or isinstance(value, ast.Constant) and value.value in {None, False, ""}:
+        return True
+    if isinstance(value, ast.Dict):
+        return not value.keys
+    return isinstance(value, (ast.List, ast.Tuple, ast.Set)) and not value.elts
 
 
 _PRIVILEGE_FIELDS = {"role", "admin", "is_admin", "is_staff", "is_superuser", "permissions", "permission", "access_level", "privilege", "privileges"}
@@ -219,6 +285,158 @@ def _client_controlled_privilege(node: ast.Assign | ast.AnnAssign, request_names
         for child in ast.walk(value)
     )
     return privilege_target and request_input
+
+
+def _mass_assignment(node: ast.Call, request_names: set[str]) -> bool:
+    """Catch common direct request-object mass assignment/update calls."""
+    method = node.func.attr.lower() if isinstance(node.func, ast.Attribute) else (
+        node.func.id.lower() if isinstance(node.func, ast.Name) else ""
+    )
+    if method not in {"update", "setattr"}:
+        return False
+    if not node.args:
+        return False
+    return any(
+        isinstance(child, ast.Name) and child.id in request_names
+        or isinstance(child, ast.Attribute) and child.attr.lower() in {
+            "json", "form", "data", "body", "values", "query_params"
+        }
+        for child in ast.walk(node.args[-1])
+    )
+
+
+def _auth_secret_comparison(node: ast.If) -> bool:
+    """Flag login branches comparing a password input to a credential-like name.
+
+    This is deliberately name-based: it detects patterns such as
+    `if password == DB_ADMIN_PASSWORD`, including an imported constant, without
+    claiming that every password comparison is insecure.
+    """
+    credential_words = ("password", "passwd", "secret", "credential", "admin_key")
+    input_words = ("password", "passwd", "passphrase")
+    for comparison in (item for item in ast.walk(node.test) if isinstance(item, ast.Compare)):
+        operands = [comparison.left, *comparison.comparators]
+        names = [
+            child.id.lower()
+            for operand in operands
+            for child in ast.walk(operand)
+            if isinstance(child, ast.Name)
+        ]
+        has_input = any(any(word in name for word in input_words) for name in names)
+        has_secret = any(any(word in name for word in credential_words) for name in names)
+        if has_input and has_secret:
+            return True
+    return False
+
+
+def _potential_idor(node: ast.FunctionDef | ast.AsyncFunctionDef) -> bool:
+    """Flag a narrow request-id -> unscoped SQL SELECT pattern (potential IDOR)."""
+    def request_id_read(expression: ast.AST) -> bool:
+        return any(
+            isinstance(child, ast.Call)
+            and isinstance(child.func, ast.Attribute)
+            and child.func.attr == "get"
+            and child.args
+            and isinstance(child.args[0], ast.Constant)
+            and isinstance(child.args[0].value, str)
+            and child.args[0].value.lower() in {"id", "record_id", "account_id", "document_id", "invoice_id"}
+            and any(isinstance(part, ast.Name) and part.id == "request" for part in ast.walk(child))
+            for child in ast.walk(expression)
+        )
+
+    request_ids: set[str] = set()
+    for item in ast.walk(node):
+        if not isinstance(item, (ast.Assign, ast.AnnAssign)) or item.value is None:
+            continue
+        targets = item.targets if isinstance(item, ast.Assign) else [item.target]
+        if request_id_read(item.value):
+            request_ids.update(target.id for target in targets if isinstance(target, ast.Name))
+    function_names = {
+        child.id.lower() for child in ast.walk(node) if isinstance(child, ast.Name)
+    } | {
+        child.attr.lower() for child in ast.walk(node) if isinstance(child, ast.Attribute)
+    }
+    if function_names.intersection({"owner_id", "tenant_id", "authorize", "can_access", "check_permission", "current_user"}):
+        return False
+
+    assigned_sql = {
+        target.id: item.value.value
+        for item in ast.walk(node)
+        if isinstance(item, ast.Assign) and isinstance(item.value, ast.Constant) and isinstance(item.value.value, str)
+        for target in item.targets if isinstance(target, ast.Name)
+    }
+    for call in (item for item in ast.walk(node) if isinstance(item, ast.Call)):
+        if not isinstance(call.func, ast.Attribute) or call.func.attr not in {"execute", "query", "fetchone", "fetchall"}:
+            continue
+        if not call.args:
+            continue
+        statement = call.args[0].value if isinstance(call.args[0], ast.Constant) and isinstance(call.args[0].value, str) else (
+            assigned_sql.get(call.args[0].id, "") if isinstance(call.args[0], ast.Name) else ""
+        )
+        if not re.search(r"\bselect\b", statement, re.IGNORECASE):
+            continue
+        if not re.search(r"\bwhere\s+[\w.]*id\s*=", statement, re.IGNORECASE):
+            continue
+        if re.search(r"\b(?:owner_id|user_id|tenant_id|account_owner)\s*=", statement, re.IGNORECASE):
+            continue
+        if any(
+            isinstance(child, ast.Name) and child.id in request_ids
+            for argument in call.args[1:] for child in ast.walk(argument)
+        ) or any(request_id_read(argument) for argument in call.args[1:]):
+            return True
+    return False
+
+
+def _weak_random_for_secret(node: ast.Assign | ast.AnnAssign) -> bool:
+    value = node.value
+    if not isinstance(value, ast.Call):
+        return False
+    function = value.func
+    weak_random = (
+        isinstance(function, ast.Attribute)
+        and isinstance(function.value, ast.Name)
+        and function.value.id == "random"
+        and function.attr in {"random", "randint", "randrange", "choice", "getrandbits"}
+    )
+    if not weak_random:
+        return False
+    targets = node.targets if isinstance(node, ast.Assign) else [node.target]
+    security_name = any(
+        isinstance(child, ast.Name)
+        and any(word in child.id.lower() for word in ("token", "secret", "password", "session", "nonce", "key"))
+        for target in targets for child in ast.walk(target)
+    )
+    return security_name
+
+
+def _dynamic_template_string(node: ast.Call, tainted_names: set[str]) -> bool:
+    """Detect user-controlled values interpolated into server-side templates."""
+    if not isinstance(node.func, ast.Name) or node.func.id != "render_template_string" or not node.args:
+        return False
+    template = node.args[0]
+    return (
+        isinstance(template, ast.JoinedStr)
+        or isinstance(template, ast.BinOp) and _expression_is_dynamic(template, tainted_names)
+        or isinstance(template, ast.Name) and template.id in tainted_names
+        or isinstance(template, ast.Call) and isinstance(template.func, ast.Attribute)
+        and template.func.attr in {"format", "format_map"}
+    )
+
+
+def _unsafe_deserializer_imports(tree: ast.AST) -> dict[str, str]:
+    """Find module and function aliases for common unsafe deserializers."""
+    aliases: dict[str, str] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                module = alias.name.split(".", 1)[0]
+                if module in {"pickle", "marshal", "yaml"}:
+                    aliases[alias.asname or module] = module
+        if isinstance(node, ast.ImportFrom) and node.module in {"pickle", "marshal", "yaml"}:
+            for alias in node.names:
+                if alias.name in {"load", "loads"}:
+                    aliases[alias.asname or alias.name] = f"{node.module}.{alias.name}"
+    return aliases
 
 
 # A03:2021 — eval() usage. Match the Call node so eval() is detected in any
@@ -288,14 +506,19 @@ def _password_hash_function(node: ast.FunctionDef | ast.AsyncFunctionDef) -> boo
 
 
 # A08:2021 — pickle.loads / yaml.load unsafe deserialization
-def _unsafe_deserialize(node: ast.Call) -> bool:
+def _unsafe_deserialize(node: ast.Call, imported_aliases: dict[str, str] | None = None) -> bool:
+    imported_aliases = imported_aliases or {}
     if isinstance(node.func, ast.Attribute) and node.func.attr in {"loads", "load"}:
         module = node.func.value
-        if isinstance(module, ast.Name) and module.id in {"pickle", "marshal", "yaml"}:
+        if isinstance(module, ast.Name) and imported_aliases.get(module.id, module.id) in {"pickle", "marshal", "yaml"}:
             return True
         # yaml.load can be imported as a direct function.
         if isinstance(module, ast.Name) and module.id in {"load", "loads"}:
             return True
+    if isinstance(node.func, ast.Name):
+        return imported_aliases.get(node.func.id, "") in {
+            "pickle.load", "pickle.loads", "marshal.load", "marshal.loads", "yaml.load", "yaml.loads"
+        }
     return False
 
 
@@ -566,4 +789,123 @@ _rule(
     suggestion="Allowlist domains and reject private/internal IP ranges before requests.",
     checker="call",
     matches=_ssrf_requests,
+)
+
+# Additional targeted patterns across the 2025 categories. These checks favor
+# high-signal source patterns and intentionally do not claim category coverage.
+_rule(
+    id="PY-AUTH-001",
+    title="Password Compared with a Credential Constant",
+    severity="critical",
+    confidence="medium",
+    cwe_id="CWE-287",
+    owasp_ref="A07:2025-Authentication-Failures",
+    message="An authentication branch compares a password input with a credential-like constant. This can create a shared-password backdoor, including when the constant is imported from another module.",
+    suggestion="Remove shared or hard-coded password bypasses. Verify the submitted password against the individual account's salted password hash and enforce the normal authentication flow.",
+    checker="if",
+    matches=_auth_secret_comparison,
+)
+
+_rule(
+    id="PY-ACCESS-001",
+    title="Potential Unscoped Object Lookup",
+    severity="high",
+    confidence="low",
+    cwe_id="CWE-639",
+    owasp_ref="A01:2025-Broken-Access-Control",
+    message="A request-sourced object identifier appears to reach a SQL lookup without a visible owner or tenant constraint. Verify authorization before returning the record.",
+    suggestion="Scope the lookup to the authenticated user's ownership or tenant and enforce authorization on the server for every request.",
+    checker="function",
+    matches=_potential_idor,
+)
+
+_rule(
+    id="PY-CONFIG-002",
+    title="Credentialed Wildcard CORS",
+    severity="high",
+    confidence="high",
+    cwe_id="CWE-942",
+    owasp_ref="A02:2025-Security-Misconfiguration",
+    message="CORS is configured to allow every origin while also allowing credentials.",
+    suggestion="Use an explicit allowlist of trusted origins and enable credentials only for origins that require them.",
+    checker="call",
+    matches=_permissive_cors,
+)
+
+_rule(
+    id="PY-CONFIG-003",
+    title="Flask Debug Server Enabled",
+    severity="high",
+    confidence="high",
+    cwe_id="CWE-489",
+    owasp_ref="A02:2025-Security-Misconfiguration",
+    message="Flask is started with debug=True, which can expose interactive debugging and detailed diagnostics.",
+    suggestion="Disable debug mode outside local development and configure production settings separately.",
+    checker="call",
+    matches=_flask_debug_enabled,
+)
+
+_rule(
+    id="PY-CRYPTO-003",
+    title="Weak Randomness Used for a Security Value",
+    severity="high",
+    confidence="high",
+    cwe_id="CWE-338",
+    owasp_ref="A04:2025-Cryptographic-Failures",
+    message="The random module is used to create a token, key, password, session identifier, or nonce; its output is predictable.",
+    suggestion="Use secrets.token_urlsafe(), secrets.token_bytes(), or another cryptographically secure generator appropriate to the value.",
+    checker="assign-extra",
+    matches=_weak_random_for_secret,
+)
+
+_rule(
+    id="PY-DESIGN-002",
+    title="Request Data Passed to Model Update",
+    severity="high",
+    confidence="medium",
+    cwe_id="CWE-915",
+    owasp_ref="A06:2025-Insecure-Design",
+    message="Request data appears to be passed directly into an object update operation, which can allow mass assignment of privileged fields.",
+    suggestion="Allowlist editable fields and set authorization-sensitive properties from trusted server-side policy.",
+    checker="call",
+    matches=_mass_assignment,
+)
+
+_rule(
+    id="PY-INJECT-001",
+    title="Dynamic Server-Side Template",
+    severity="high",
+    confidence="medium",
+    cwe_id="CWE-1336",
+    owasp_ref="A05:2025-Injection",
+    message="User-controlled or dynamically formatted content is passed as a server-side template source.",
+    suggestion="Keep templates in trusted files and pass user values as template data; do not build template source from request input.",
+    checker="call",
+    matches=_dynamic_template_string,
+)
+
+_rule(
+    id="PY-LOG-002",
+    title="Request Data Written Directly to Logs",
+    severity="medium",
+    confidence="low",
+    cwe_id="CWE-117",
+    owasp_ref="A09:2025-Security-Logging-and-Alerting-Failures",
+    message="Request-derived text is passed directly to a logging call and may forge or corrupt log entries if it contains control characters.",
+    suggestion="Use structured logging, escape or normalize control characters, and avoid recording unnecessary user-supplied content.",
+    checker="call",
+    matches=_untrusted_value_logged,
+)
+
+_rule(
+    id="PY-EXCEPT-002",
+    title="Broad Exception Converted to Success-Like Result",
+    severity="medium",
+    confidence="low",
+    cwe_id="CWE-755",
+    owasp_ref="A10:2025-Mishandling-of-Exceptional-Conditions",
+    message="A broad exception handler returns a success-like empty value, which can hide a failed security-sensitive operation.",
+    suggestion="Catch expected exceptions specifically and return an explicit failure result or propagate the error safely.",
+    checker="except",
+    matches=_exception_swallowed_as_success,
 )

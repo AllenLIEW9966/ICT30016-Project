@@ -10,7 +10,7 @@ from app.routes.health import router as health_router
 app = FastAPI(
     title="Secure Coding Assistant API",
     description="Static analysis + AI-powered secure coding suggestions.",
-    version="0.1.51",
+    version="0.1.60",
 )
 
 
@@ -98,6 +98,11 @@ async def root():
 
 if __name__ == "__main__":
     import sys
+    import os
+    # PyInstaller's windowed bootloader can leave both streams unset.
+    for stream in ("stdout", "stderr"):
+        if getattr(sys, stream) is None:
+            setattr(sys, stream, open(os.devnull, "w", encoding="utf-8"))
     import uvicorn
     host, port = "127.0.0.1", 8000
     args = sys.argv[1:]

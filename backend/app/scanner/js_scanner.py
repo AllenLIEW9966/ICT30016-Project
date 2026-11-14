@@ -195,6 +195,94 @@ JS_RULES = [
         "suggestion": "Derive privileges from the authenticated server-side identity and enforce authorization and ownership checks on the server.",
         "pattern": re.compile(r"(?:[A-Za-z_$][\w$]*\.)?(?:role|admin|isAdmin|is_admin|isStaff|is_staff|isSuperuser|is_superuser|permissions?|accessLevel|access_level)\s*=\s*(?:req|request|ctx)\.(?:body|query|params)\.", re.IGNORECASE),
     },
+    {
+        "id": "JS-AUTH-001",
+        "title": "Password Compared with a Credential Constant",
+        "severity": "critical",
+        "confidence": "medium",
+        "cwe_id": "CWE-287",
+        "owasp_ref": "A07:2025-Authentication-Failures",
+        "message": "An authentication check compares a password value with a credential-like constant, which can create a shared-password backdoor.",
+        "suggestion": "Remove shared or hard-coded password bypasses. Verify credentials against the individual account's salted password hash.",
+        "pattern": re.compile(r"\b(?:password|passwd|passphrase)\b\s*={2,3}\s*[A-Za-z_$][\w$]*(?:PASSWORD|PASSWD|SECRET|CREDENTIAL)|[A-Za-z_$][\w$]*(?:PASSWORD|PASSWD|SECRET|CREDENTIAL)\s*={2,3}\s*\b(?:password|passwd|passphrase)\b", re.IGNORECASE),
+    },
+    {
+        "id": "JS-DESIGN-002",
+        "title": "Request Data Passed to Model Update",
+        "severity": "high",
+        "confidence": "medium",
+        "cwe_id": "CWE-915",
+        "owasp_ref": "A06:2025-Insecure-Design",
+        "message": "Request data appears to be copied or passed directly into a model update, which can allow mass assignment of privileged fields.",
+        "suggestion": "Allowlist editable fields and set authorization-sensitive properties from trusted server-side policy.",
+        "pattern": re.compile(r"(?:Object\.assign\s*\(\s*[A-Za-z_$][\w$]*\s*,\s*(?:req|request|ctx)\.(?:body|query|params)|[A-Za-z_$][\w$.]*\.update\s*\(\s*(?:req|request|ctx)\.(?:body|query|params))", re.IGNORECASE),
+    },
+    {
+        "id": "JS-CONFIG-002",
+        "title": "Credentialed Wildcard CORS",
+        "severity": "high",
+        "confidence": "medium",
+        "cwe_id": "CWE-942",
+        "owasp_ref": "A02:2025-Security-Misconfiguration",
+        "message": "CORS appears to allow every origin while also allowing credentials.",
+        "suggestion": "Use an explicit allowlist of trusted origins and enable credentials only for origins that require them.",
+        "pattern": re.compile(r"cors\s*\(\s*\{[^}]*origin\s*:\s*[\"']\*[\"'][^}]*credentials\s*:\s*true|cors\s*\(\s*\{[^}]*credentials\s*:\s*true[^}]*origin\s*:\s*[\"']\*[\"']", re.IGNORECASE),
+    },
+    {
+        "id": "JS-PATH-001",
+        "title": "Potential Path Traversal to File Read",
+        "severity": "high",
+        "confidence": "medium",
+        "cwe_id": "CWE-22",
+        "owasp_ref": "A01:2025-Broken-Access-Control",
+        "message": "Request-controlled data appears to reach a file-reading or download operation without a visible containment check.",
+        "suggestion": "Resolve the path against a trusted base directory and reject it unless the resolved path remains inside that directory.",
+        "pattern": re.compile(r"(?:sendFile|sendfile|readFile|readFileSync|createReadStream)\s*\(\s*(?:req|request|ctx)\.(?:query|params|body)", re.IGNORECASE),
+    },
+    {
+        "id": "JS-ACCESS-001",
+        "title": "Potential Unscoped Object Lookup",
+        "severity": "high",
+        "confidence": "low",
+        "cwe_id": "CWE-639",
+        "owasp_ref": "A01:2025-Broken-Access-Control",
+        "message": "A request-sourced record identifier appears to be used for a direct lookup. Verify ownership or tenant authorization before returning the record.",
+        "suggestion": "Scope the lookup to the authenticated user's ownership or tenant and enforce authorization on the server for every request.",
+        "pattern": re.compile(r"\b(?:findById|findOne|findUnique|findFirst)\s*\(\s*(?:req|request|ctx)\.(?:params|query|body)\.(?:id|recordId|accountId|documentId|invoiceId)\b", re.IGNORECASE),
+    },
+    {
+        "id": "JS-INJECT-001",
+        "title": "Dynamic Server-Side Template",
+        "severity": "high",
+        "confidence": "medium",
+        "cwe_id": "CWE-1336",
+        "owasp_ref": "A05:2025-Injection",
+        "message": "Request-controlled data appears to be used as a server-side template source.",
+        "suggestion": "Keep templates in trusted files and pass request values as data; do not select or build template source directly from user input.",
+        "pattern": re.compile(r"(?:render|renderFile|renderString|compile)\s*\(\s*(?:req|request|ctx)\.(?:query|params|body)", re.IGNORECASE),
+    },
+    {
+        "id": "JS-LOG-002",
+        "title": "Request Data Written Directly to Logs",
+        "severity": "medium",
+        "confidence": "low",
+        "cwe_id": "CWE-117",
+        "owasp_ref": "A09:2025-Security-Logging-and-Alerting-Failures",
+        "message": "Request-derived text is passed directly to a logging call and may forge or corrupt log entries if it contains control characters.",
+        "suggestion": "Use structured logging, escape or normalize control characters, and avoid recording unnecessary user-supplied content.",
+        "pattern": re.compile(r"(?:console\.(?:log|info|warn|error|debug)|logger\.(?:info|warn|error|debug))\s*\([^\n]*(?:req|request|ctx)\.(?:body|query|params|headers)", re.IGNORECASE),
+    },
+    {
+        "id": "JS-EXCEPT-002",
+        "title": "Broad Exception Converted to Success-Like Result",
+        "severity": "medium",
+        "confidence": "low",
+        "cwe_id": "CWE-755",
+        "owasp_ref": "A10:2025-Mishandling-of-Exceptional-Conditions",
+        "message": "A catch block returns a success-like empty value, which can hide a failed security-sensitive operation.",
+        "suggestion": "Handle expected failures explicitly and return an error result or rethrow after safe logging.",
+        "pattern": re.compile(r"catch\s*\([^)]*\)\s*\{[^}]*\breturn\s+(?:null|false|undefined|\[\]|\{\})", re.IGNORECASE),
+    },
 ]
 
 
@@ -280,6 +368,41 @@ def _collect_findings(source: str, filename: str) -> list[dict]:
                 "context": {"filename": filename},
             })
 
+    fallback_rule = next((rule for rule in JS_RULES if rule["id"] == "JS-EXCEPT-002"), None)
+    if fallback_rule:
+        swallowed = re.compile(
+            r"\bcatch\s*\([^)]*\)\s*\{[^}]*?\breturn\s+(?:null|false|undefined|\[\]|\{\})[^}]*\}",
+            re.DOTALL | re.IGNORECASE,
+        )
+        for match in swallowed.finditer(masked_source):
+            line_no = masked_source.count("\n", 0, match.start()) + 1
+            line_start = masked_source.rfind("\n", 0, match.start()) + 1
+            end_line = masked_source.count("\n", 0, match.end()) + 1
+            end_line_start = masked_source.rfind("\n", 0, match.end()) + 1
+            if any(
+                finding["rule_id"] == fallback_rule["id"] and finding["line"] == line_no
+                for finding in findings
+            ):
+                continue
+            source_line = lines[line_no - 1] if line_no <= len(lines) else ""
+            findings.append({
+                "rule_id": fallback_rule["id"],
+                "title": fallback_rule["title"],
+                "severity": fallback_rule["severity"],
+                "confidence": fallback_rule["confidence"],
+                "cwe_id": fallback_rule["cwe_id"],
+                "owasp_ref": fallback_rule["owasp_ref"],
+                "owasp_2021_ref": owasp_2021_ref(fallback_rule["id"]),
+                "message": fallback_rule["message"],
+                "line": line_no,
+                "column": match.start() - line_start,
+                "end_line": end_line,
+                "end_column": match.end() - end_line_start,
+                "suggestion": fallback_rule["suggestion"],
+                "code_snippet": source_line.strip(),
+                "context": {"filename": filename},
+            })
+
     return findings
 
 
@@ -359,7 +482,7 @@ def scan(source: str, filename: str = "untitled") -> list[dict]:
             # Keep newly-added lightweight rules active when the AST sidecar is
             # available. The regex fallback alone would otherwise make their
             # behavior depend on whether Node/Babel could be started.
-            supplemental_ids = {"JS-TLS-001", "JS-LOG-001", "JS-EXCEPT-001", "JS-DESIGN-001", "JS-SERIAL-001"}
+            supplemental_ids = {"JS-TLS-001", "JS-LOG-001", "JS-EXCEPT-001", "JS-DESIGN-001", "JS-SERIAL-001", "JS-AUTH-001", "JS-DESIGN-002", "JS-CONFIG-002", "JS-PATH-001", "JS-ACCESS-001", "JS-INJECT-001", "JS-LOG-002", "JS-EXCEPT-002"}
             supplemental = [
                 finding for finding in _collect_findings(source, filename)
                 if finding["rule_id"] in supplemental_ids

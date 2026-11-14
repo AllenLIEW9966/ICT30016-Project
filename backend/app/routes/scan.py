@@ -5,8 +5,20 @@ from starlette.concurrency import run_in_threadpool
 from app.scanner.python_scanner import scan
 from app.scanner import js_scanner
 from app.scanner.dependency_scanner import scan as scan_dependencies
+from app.scanner.dependency_scanner import advisory_findings
 
 router = APIRouter()
+
+
+class AdvisoryRequest(BaseModel):
+    code: str = Field(max_length=512_000)
+    filename: str = Field(max_length=512)
+    lock_text: str = Field(default="", max_length=2_097_152)
+
+
+@router.post("/dependency-advisories")
+async def dependency_advisories(req: AdvisoryRequest):
+    return {"findings": await advisory_findings(req.code, req.filename, req.lock_text)}
 
 
 class ScanRequest(BaseModel):

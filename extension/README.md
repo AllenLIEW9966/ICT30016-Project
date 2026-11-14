@@ -6,6 +6,8 @@ CodeShield AI is a Visual Studio Code extension that scans Python and JavaScript
 
 ## Features
 
+Enable `secureCoding.osvAdvisories` in user settings for optional dependency advisory lookups in trusted workspaces. OSV.dev receives registry package names, ecosystems and exact versions. Matches appear under rule CS-A03-OSV. Local manifest scanning remains available offline.
+
 - Scans supported Python and JavaScript files and common dependency manifests (`requirements*.txt`, `pyproject.toml`, and `package.json`) automatically when the extension starts and as files change.
 - Reports findings inline and in VS Code’s Problems panel with severity, rule identifiers, and remediation guidance.
 - Shows a primary OWASP Top 10:2025 category and a rule-specific OWASP Top 10:2021 crosswalk when one directly applies. The new 2025 A10 category has no 2021 counterpart and is labeled N/A for the crosswalk.

@@ -5,7 +5,19 @@ import tokenize
 from dataclasses import dataclass, field, asdict
 from typing import List
 
-from app.scanner.rules.python_rules import PYTHON_RULES, _client_controlled_privilege, _request_source_names
+from app.scanner.rules.python_rules import (
+    PYTHON_RULES,
+    _auth_secret_comparison,
+    _client_controlled_privilege,
+    _dynamic_template_string,
+    _flask_debug_enabled,
+    _mass_assignment,
+    _permissive_cors,
+    _request_source_names,
+    _unsafe_deserializer_imports,
+    _untrusted_value_logged,
+    _weak_random_for_secret,
+)
 from app.scanner.owasp_mapping import owasp_2021_ref
 
 
@@ -34,7 +46,8 @@ class Finding:
 class _RuleVisitor(ast.NodeVisitor):
     def __init__(self, source: str, tree: ast.AST | None = None, validate: bool = True,
                  tainted_names: set[str] | None = None, url_constants: set[str] | None = None,
-                 request_names: set[str] | None = None):
+                 request_names: set[str] | None = None,
+                 deserializer_aliases: dict[str, str] | None = None):
         # keep source lines so we can grab the exact code snippet later
         self.source = source.splitlines()
         self.findings: List[Finding] = []
@@ -43,6 +56,7 @@ class _RuleVisitor(ast.NodeVisitor):
         self._tainted_names = tainted_names or set()
         self._url_constants = url_constants or set()
         self._request_names = request_names or set()
+        self._deserializer_aliases = deserializer_aliases or {}
 
     def _editor_column(self, line: int, utf8_column: int) -> int:
         """Convert CPython AST UTF-8 byte columns to VS Code UTF-16 columns."""
@@ -107,6 +121,18 @@ class _RuleVisitor(ast.NodeVisitor):
                 matched = rule["matches"](node, self._url_constants)
             elif rule_id == "PY-PATH-001":
                 matched = rule["matches"](node, self._tainted_names)
+            elif rule_id == "PY-INJECT-001":
+                matched = rule["matches"](node, self._tainted_names)
+            elif rule_id == "PY-SERIAL-001":
+                matched = rule["matches"](node, self._deserializer_aliases)
+            elif rule_id == "PY-DESIGN-002":
+                matched = rule["matches"](node, self._request_names)
+            elif rule_id == "PY-CONFIG-002":
+                matched = rule["matches"](node)
+            elif rule_id == "PY-CONFIG-003":
+                matched = rule["matches"](node)
+            elif rule_id == "PY-LOG-002":
+                matched = rule["matches"](node, self._request_names)
             else:
                 matched = rule["matches"](node)
             if matched:
@@ -119,6 +145,8 @@ class _RuleVisitor(ast.NodeVisitor):
             matched = rule["matches"](node) if rule.get("checker") == "assign" else (
                 _client_controlled_privilege(node, self._request_names) if rule.get("checker") == "design" else False
             )
+            if rule.get("checker") == "assign-extra":
+                matched = rule["matches"](node)
             if matched:
                 self._check(node, rule, self._tree)
         self.generic_visit(node)
@@ -129,6 +157,8 @@ class _RuleVisitor(ast.NodeVisitor):
                 matched = rule["matches"](node) if rule.get("checker") == "assign" else (
                     _client_controlled_privilege(node, self._request_names) if rule.get("checker") == "design" else False
                 )
+                if rule.get("checker") == "assign-extra":
+                    matched = rule["matches"](node)
                 if matched:
                     self._check(node, rule, self._tree)
         self.generic_visit(node)
@@ -150,6 +180,12 @@ class _RuleVisitor(ast.NodeVisitor):
     def visit_ExceptHandler(self, node: ast.ExceptHandler):
         for rule in PYTHON_RULES:
             if rule.get("checker") == "except" and rule["matches"](node):
+                self._check(node, rule, self._tree)
+        self.generic_visit(node)
+
+    def visit_If(self, node: ast.If):
+        for rule in PYTHON_RULES:
+            if rule.get("checker") == "if" and rule["matches"](node):
                 self._check(node, rule, self._tree)
         self.generic_visit(node)
 
@@ -197,8 +233,10 @@ def scan(source: str, filename: str = "untitled", validate: bool = True) -> list
     tainted_names = _mark_tainted(tree)
     url_constants = _mark_url_constants(tree)
     request_names = _request_source_names(tree)
+    deserializer_aliases = _unsafe_deserializer_imports(tree)
     visitor = _RuleVisitor(source, tree, validate=validate, tainted_names=tainted_names,
-                           url_constants=url_constants, request_names=request_names)
+                           url_constants=url_constants, request_names=request_names,
+                           deserializer_aliases=deserializer_aliases)
     visitor.visit(tree)
     return [f.to_dict() for f in visitor.findings]
 

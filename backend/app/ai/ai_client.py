@@ -62,6 +62,12 @@ OLLAMA_FIX_SCHEMA = {
 }
 
 
+def _design_fix_guidance(rule_id: str) -> str:
+    if rule_id in {"PY-DESIGN-001", "JS-DESIGN-001", "PY-DESIGN-002", "JS-DESIGN-002"}:
+        return "\nDo not invent a role/ownership policy. If the applicable policy is missing, return can_fix=false and explain what is needed.\n"
+    return ""
+
+
 async def suggest_fix(
     *,
     rule_id: str,
@@ -145,7 +151,7 @@ async def suggest_fix(
                 for item in related_project_files
             ],
         }, ensure_ascii=False),
-        command_guidance=command_guidance,
+        command_guidance=command_guidance + _design_fix_guidance(rule_id),
     )
 
     api_provider = str(context.get("ai_provider", "ollama")).lower()

@@ -6,6 +6,7 @@ compile-out.txt
 src/**/*.bak
 .DS_Store
 .vscode-test/
+test/
 src/**
 tsconfig.json
 .vscode/**

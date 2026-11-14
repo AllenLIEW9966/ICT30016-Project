@@ -10,6 +10,7 @@ if str(BACKEND_DIR) not in sys.path:
     sys.path.insert(0, str(BACKEND_DIR))
 
 from app.scanner.python_scanner import scan
+from app.test_osv import test_osv_enrichment
 from app.scanner import js_scanner
 
 
@@ -92,6 +93,13 @@ def test_unsafe_deserialization_detection():
 def test_path_traversal_detection():
     findings = scan(VULNERABLE_OPEN, "test.py")
     assert any(f["rule_id"] == "PY-PATH-001" for f in findings), findings
+
+
+def test_object_lookup_with_assigned_sql():
+    folder = BACKEND_DIR.parent / "test" / "fixtures" / "object-access"
+    for filename, expected in (("unscoped.py", True), ("scoped.py", False)):
+        findings = scan((folder / filename).read_text(encoding="utf-8"), filename)
+        assert any(f["rule_id"] == "PY-ACCESS-001" for f in findings) == expected, findings
 
 
 def test_clean_code_no_findings():
@@ -453,6 +461,8 @@ if __name__ == "__main__":
         test_unsafe_deserialization_detection,
         test_path_traversal_detection,
         test_clean_code_no_findings,
+        test_osv_enrichment,
+        test_object_lookup_with_assigned_sql,
         test_js_eval_detection,
         test_js_xss_detection,
         test_js_weak_random_detection,
