@@ -1,0 +1,2 @@
+# Expected: no mocked advisory; A03:2025, CWE-1104. Synthetic package.
+example-fixture==1.0.0

@@ -1,5 +1,6 @@
 import * as vscode from 'vscode';
 import * as path from 'path';
+import { publishCurrentAdvisories } from './advisoryUpdate';
 import { BackendManager, normalizeBackendUrl } from './backendManager';
 
 type Finding = {
@@ -472,6 +473,59 @@ export function activate(context: vscode.ExtensionContext) {
     return !relative.split(/[\\/]/).some((part) => contextExcludedDirectories.has(part.toLowerCase()));
   }
 
+  function enrichDependencies(uri: vscode.Uri, code: string, requestId: number, version: number,
+    local: Finding[], diagnostics: vscode.Diagnostic[]) {
+    const key = uri.toString();
+    const log = (message: string) => workspaceScanOutput.appendLine(`[CS-A03-OSV #${requestId}] ${key} ${message}`);
+    if (!vscode.workspace.isTrusted) { log('skipped: workspace untrusted'); return; }
+    if (!vscode.workspace.getConfiguration('secureCoding').get<boolean>('osvAdvisories')) {
+      log('skipped: osvAdvisories disabled'); return;
+    }
+    const currentDoc = () => vscode.workspace.textDocuments.find(d => d.uri.toString() === key);
+    const isCurrent = () => scanRequestIds.get(key) === requestId &&
+      (version < 0 ? !currentDoc()?.isDirty : currentDoc()?.version === version);
+    void publishCurrentAdvisories(async () => {
+      const names = path.basename(uri.fsPath) === 'package.json'
+        ? ['package-lock.json'] : ['requirements.lock', 'constraints.txt'];
+      let lockText = '';
+      for (const name of names) {
+        const lock = vscode.Uri.joinPath(uri, '..', name);
+        try {
+          if ((await vscode.workspace.fs.stat(lock)).size > 2097152) continue;
+          lockText = new TextDecoder().decode(await vscode.workspace.fs.readFile(lock));
+          break;
+        } catch { /* Optional sibling lock. */ }
+      }
+      if (!isCurrent()) return [];
+      const payload = { filename: path.basename(uri.fsPath), code, lock_text: lockText };
+      if (Buffer.byteLength(JSON.stringify(payload)) > 1048576) payload.lock_text = '';
+      log('request /dependency-advisories');
+      const response = await fetch(backendUrl + '/dependency-advisories', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(payload),
+        signal: AbortSignal.timeout(30000),
+      });
+      if (!response.ok) { log('response HTTP ' + response.status); return []; }
+      const { findings } = await response.json() as { findings: Finding[] };
+      log(`response HTTP ${response.status}, findings=${findings.length}`);
+      return findings;
+    }, async () => version >= 0 || new TextDecoder().decode(await vscode.workspace.fs.readFile(uri)) === code,
+    isCurrent, extra => {
+      const combined = [...local, ...extra];
+      const added = extra.map(f => {
+        const d = new vscode.Diagnostic(new vscode.Range(f.line - 1, 0, f.line - 1, f.end_column),
+          f.message, vscode.DiagnosticSeverity.Warning);
+        d.source = 'Secure Coding';
+        d.code = f.rule_id;
+        return d;
+      });
+      diagnosticCollection.set(uri, [...diagnostics, ...added]);
+      log(`published ${added.length} advisory diagnostic(s)`);
+      findingsByUri.set(key, combined);
+      if (vscode.window.activeTextEditor?.document.uri.toString() === key) updateStatusBar(combined);
+    }, log);
+  }
+
   async function scanWorkspaceUri(uri: vscode.Uri): Promise<void> {
     const language = securityLanguageForUri(uri);
     if (!backendReady || !language || !isScannableWorkspaceUri(uri)) return;
@@ -536,6 +590,7 @@ export function activate(context: vscode.ExtensionContext) {
       // -1 marks disk-indexed diagnostics. Opening the file triggers a normal buffer
       // scan and replaces this with the document version before code actions are offered.
       findingVersionsByUri.set(uriKey, -1);
+      if (language === 'dependencies') enrichDependencies(uri, code, requestId, -1, findings, diagnostics);
     } catch (error) {
       if (scanRequestIds.get(uriKey) === requestId) {
         workspaceScanOutput.appendLine(`[workspace] scan failed for ${uri.fsPath}: ${String(error)}`);
@@ -791,6 +846,7 @@ export function activate(context: vscode.ExtensionContext) {
       findingsByUri.set(uriKey, findings);
       findingVersionsByUri.set(uriKey, version);
       updateStatusBar(findings);
+      if (language === 'dependencies') enrichDependencies(document.uri, code, requestId, version, findings, diagnostics);
     } catch (error) {
       console.error(`[Secure Coding] Scan failed: ${error}`);
       if (scanRequestIds.get(uriKey) === requestId && document.version === version && !document.isClosed) {

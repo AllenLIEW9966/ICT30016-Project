@@ -1,0 +1,2 @@
+# Expected: vulnerable for mocked advisory; A03:2025, CWE-1104. Synthetic manifest.
+django==3.2.1

@@ -1,0 +1,55 @@
+name: Package native CodeShield artifacts
+
+on:
+  workflow_call:
+    inputs:
+      runner:
+        required: true
+        type: string
+      target:
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    name: Package ${{ inputs.target }}
+    runs-on: ${{ inputs.runner }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+      - name: Install backend build dependencies
+        run: python -m pip install -r backend/requirements.txt pyinstaller==6.22.3
+      - name: Install JavaScript analyzer dependencies
+        run: npm ci --prefix backend/js-ast
+      - name: Install extension dependencies
+        run: npm ci --prefix extension
+      - name: Compile extension
+        run: npm run compile --prefix extension
+      - name: Backend regression tests
+        working-directory: backend
+        run: python app/tests.py
+      - name: Advisory publication tests
+        run: node --test extension/test/advisoryUpdate.test.cjs
+      - name: Build native backend, verify ZIP startup and package VSIX
+        run: python scripts/package_release.py ${{ inputs.target }}
+      - name: Upload VSIX
+        uses: actions/upload-artifact@v4
+        with:
+          name: secure-coding-assistant-${{ inputs.target }}
+          path: dist/${{ inputs.target }}/secure-coding-assistant-*.vsix
+          if-no-files-found: error
+      - name: Upload standalone backend ZIP
+        uses: actions/upload-artifact@v4
+        with:
+          name: codeshield-backend-${{ inputs.target }}
+          path: dist/${{ inputs.target }}/codeshield-backend-*.zip
+          if-no-files-found: error
