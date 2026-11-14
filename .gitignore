@@ -29,6 +29,7 @@ __pycache__/
 *.pyd
 .Python
 .venv/
+.env312/
 venv/
 env/
 backend/env*/
@@ -41,13 +42,13 @@ htmlcov/
 
 # Node dependencies and compiled extension output
 node_modules/
-extension/out/
+out/
 .npm/
 npm-debug.log*
 
 # Backend build artifacts and local scanner reports
 /build/
-/dist/
+dist/
 backend/build/
 backend/dist/
 backend/dist-macos/
@@ -63,7 +64,6 @@ extension/server/codeshield-backend-linux
 
 # Packaged extensions and extracted VSIX metadata
 *.vsix
-!/*.vsix
 vsix-backup/
 /\[Content_Types\].xml
 /extension.vsixmanifest
@@ -73,6 +73,7 @@ vsix-backup/
 *.tmp
 *.bak
 .codex-build/
+/presentation/
 extension/compile-out.txt
 /fix_ai_fix.py
 

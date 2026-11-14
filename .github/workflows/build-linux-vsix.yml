@@ -1,0 +1,32 @@
+name: Build Linux VSIX
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - '.github/workflows/build-linux-vsix.yml'
+      - '.github/workflows/package-platform.yml'
+      - 'scripts/package_release.py'
+      - 'README.md'
+      - 'backend/**'
+      - 'extension/**'
+      - 'test/fixtures/**'
+  pull_request:
+    paths:
+      - '.github/workflows/build-linux-vsix.yml'
+      - '.github/workflows/package-platform.yml'
+      - 'scripts/package_release.py'
+      - 'README.md'
+      - 'backend/**'
+      - 'extension/**'
+      - 'test/fixtures/**'
+
+permissions:
+  contents: read
+
+jobs:
+  package:
+    uses: ./.github/workflows/package-platform.yml
+    with:
+      runner: ubuntu-22.04
+      target: linux-x64
