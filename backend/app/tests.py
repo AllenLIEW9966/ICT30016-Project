@@ -11,6 +11,8 @@ if str(BACKEND_DIR) not in sys.path:
 
 from app.scanner.python_scanner import scan
 from app.test_osv import test_osv_enrichment
+from app.test_ai_context import test_ai_prompt_context_window
+from app.test_patch_syntax import test_strict_patch_syntax
 from app.scanner import js_scanner
 
 
@@ -265,7 +267,7 @@ def test_o02_context_window():
     from app.ai.context import extract_context
     src = "\n".join("print(%d)" % i for i in range(1, 101))
     ctx = extract_context(src, 50)
-    assert ctx["start_line"] == 35 and ctx["end_line"] == 65, ctx
+    assert ctx["start_line"] == 30 and ctx["end_line"] == 70, ctx
     assert ctx["total_lines"] == 100
 
 
@@ -480,6 +482,8 @@ if __name__ == "__main__":
         test_o03_env_secret_suppressed,
         test_o03_true_positive_retained,
         test_o02_context_window,
+        test_ai_prompt_context_window,
+        test_strict_patch_syntax,
         test_o02_template_fallback,
         test_python_ssrf_avatar_parameter,
         test_python_path_traversal_joined_filename,

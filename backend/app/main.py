@@ -10,7 +10,7 @@ from app.routes.health import router as health_router
 app = FastAPI(
     title="Secure Coding Assistant API",
     description="Static analysis + AI-powered secure coding suggestions.",
-    version="0.1.60",
+    version="0.1.61",
 )
 
 

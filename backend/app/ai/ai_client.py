@@ -30,7 +30,7 @@ Bounded surrounding source is JSON text:
 {command_guidance}
 
 Requirements:
-1. Return a replacement for exactly the supplied range; never add text before or after it. The range may intentionally cover a whole function when a safe fix needs local context. The target module header lists its actual imports and top-level bindings; related project files are background context only and their imports do not define names in the target module. Related project files are not editable in this fix.
+1. Return a replacement for exactly the supplied range; never add text before or after it. The range may intentionally cover a whole function when a safe fix needs local context. Surrounding source is limited to 20 lines before and after the finding, with original file line numbers. These prefixes are context labels and must not appear in secure_code. Imports or definitions outside this window may be omitted. Related project files are background context only and their imports do not define names in the target module. Related project files are not editable in this fix.
 2. Use your own analysis to choose a secure fix for this finding. Trace relevant values through the supplied context. Preserve unrelated code and existing interfaces where practical; when security requires a behavior change, minimize it and explain it. Remove obsolete vulnerable construction if your fix makes it unused. Do not duplicate a function, route decorator, declaration, or enclosing block.
 3. Do not add third-party dependencies or invent project APIs. Use imports and APIs supported by the supplied target module/project context; supported missing imports may be added by the extension. Do not include import statements in secure_code. Choose your own remediation strategy based on the model’s understanding of the code and finding; CodeShield does not prescribe a rule-specific implementation.
 4. Use the language's correct secure pattern for the actual sink and framework in context. Keep validation, authorization, error handling, return values, and async behavior intact; never weaken them. Do not introduce undefined names, remove required assignments, or change the enclosing function's return contract. Keep the replacement in the exact syntactic scope of the highlighted range.
@@ -81,17 +81,24 @@ async def suggest_fix(
     owasp_2021_ref: str = "N/A",
 ) -> dict[str, Any]:
     # O-02: bounded context — prefer full-source window over bare snippet
-    from app.ai.context import extract_context, extract_module_header, redact_sensitive_text
+    from app.ai.context import extract_context, redact_sensitive_text
 
     line = int(context.get("line", 1) or 1)
     end_line = context.get("end_line", line)
     full_source = context.get("full_source", "")
-    if full_source:
+    if isinstance(context.get("source_window"), str):
+        source_start = max(1, int(context.get("source_start_line", 1)))
+        ctx = extract_context(context["source_window"], line - source_start + 1)
+        snippet = ctx["snippet"]
+        ctx_start = ctx["start_line"] + source_start - 1
+        ctx_end = ctx["end_line"] + source_start - 1
+        total = max(ctx_end, int(context.get("source_total_lines", ctx_end)))
+    elif full_source:
         ctx = extract_context(str(full_source), line, int(end_line or line))
         snippet = ctx["snippet"]
         ctx_start, ctx_end, total = ctx["start_line"], ctx["end_line"], ctx["total_lines"]
     else:
-        snippet = code_snippet[:2000]
+        snippet = code_snippet
         ctx_start, ctx_end, total = line, int(end_line or line), line
 
     related_project_files: list[dict[str, str]] = []
@@ -142,10 +149,10 @@ async def suggest_fix(
         total=total,
         finding_json=json.dumps(redact_sensitive_text(str(code_snippet)[:4000]), ensure_ascii=False),
         context_json=json.dumps({
-            "current_file_context": redact_sensitive_text(str(snippet)),
-            "current_file_module_header": redact_sensitive_text(
-                extract_module_header(str(full_source or ""), language)
-            ),
+            "current_file_context": redact_sensitive_text("\n".join(
+                f"{ctx_start + offset}: {text}"
+                for offset, text in enumerate(str(snippet).split("\n"))
+            )),
             "related_project_files": [
                 {"path": item["path"], "content": redact_sensitive_text(item["content"])}
                 for item in related_project_files
